@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
-
 [Serializable]
 public class PublicPlayer
 {
@@ -27,10 +26,10 @@ public class PublicState
 
 public class GameController : NetworkBehaviour
 {
-    readonly HashSet<uint> spyPlayedThisRound = new();
     public static GameController Instance { get; private set; }
     void Awake() => Instance = this;
 
+    // ===== Server-only structures =====
     class SPlayer
     {
         public NetworkConnectionToClient Conn;
@@ -44,17 +43,34 @@ public class GameController : NetworkBehaviour
         public uint NetId => Identity ? Identity.netId : 0;
     }
 
+    // state
     readonly List<SPlayer> sPlayers = new();
     readonly List<CardType> deck = new();
+    readonly HashSet<uint> spyPlayedThisRound = new();            // for Spy bonus
+    readonly Dictionary<uint, List<CardType>> chancellorPending = new(); // actorNetId -> 3-card options
+
     int currentIndex;
     int burnedCount;
     bool roundActive;
+    int firstPlayerIndexThisMatch = -1;
 
-    // -------- Server lifecycle --------
+    // ===== Server lifecycle =====
     public override void OnStartServer()
     {
         base.OnStartServer();
-        BuildPlayersFromConnections();
+        StartCoroutine(BootstrapRoundWhenPlayersReady());
+    }
+
+    private System.Collections.IEnumerator BootstrapRoundWhenPlayersReady()
+    {
+        // wait until at least one PlayerNetwork has spawned & has an identity
+        while (true)
+        {
+            BuildPlayersFromConnections();
+            if (sPlayers.Count >= 2) break;
+            yield return null;
+        }
+
         StartNewRound();
     }
 
@@ -78,67 +94,79 @@ public class GameController : NetworkBehaviour
         }
     }
 
+    // ===== Round/start turn =====
     void StartNewRound()
     {
-        spyPlayedThisRound.Clear();
+
+        if (sPlayers.Count == 0)
+        {
+            Debug.LogWarning("[SRV] StartNewRound called but no players yet.");
+            return;
+        }
         roundActive = true;
-        currentIndex = 0;
-        burnedCount = 0;
+        spyPlayedThisRound.Clear();
+        chancellorPending.Clear();
         deck.Clear();
 
-        Add(CardType.Guard, 5);
-        Add(CardType.Priest, 2);
-        Add(CardType.Baron, 2);
-        Add(CardType.Handmaid, 2);
-        Add(CardType.Prince, 2);
-        Add(CardType.King, 1);
-        Add(CardType.Countess, 1);
-        Add(CardType.Princess, 1);
+        // Build deck from DB (handles Spy/Chancellor/anything you add there)
+        foreach (var kv in CardDB.Count)
+            for (int i = 0; i < kv.Value; i++) deck.Add(kv.Key);
         Shuffle(deck);
 
+        // rotate starting player each round (random for the first round)
+        if (firstPlayerIndexThisMatch < 0)
+            firstPlayerIndexThisMatch = UnityEngine.Random.Range(0, sPlayers.Count);
+        else
+            firstPlayerIndexThisMatch = (firstPlayerIndexThisMatch + 1) % sPlayers.Count;
+        currentIndex = firstPlayerIndexThisMatch;
+
+        // reset players
         foreach (var p in sPlayers)
         {
-            p.Eliminated = false; p.Protected = false;
-            p.Hand.Clear(); p.Discards.Clear();
+            p.Eliminated = false;
+            p.Protected = false;
+            p.Hand.Clear();
+            p.Discards.Clear();
         }
 
+        // burn rule
         burnedCount = (sPlayers.Count == 2) ? 3 : 1;
-        for (int i = 0; i < burnedCount && deck.Count > 0; i++) deck.RemoveAt(0);
+        for (int i = 0; i < burnedCount && deck.Count > 0; i++)
+            deck.RemoveAt(0);
 
+        // deal 1 to each
         foreach (var p in sPlayers) DealTo(p, 1);
 
+        if (currentIndex < 0 || currentIndex >= sPlayers.Count)
+            currentIndex = 0;
+        RpcLog($"New round. {sPlayers[currentIndex].Name} starts.");
         BroadcastState();
         StartTurn();
     }
 
-    void Add(CardType t, int n) { for (int i = 0; i < n; i++) deck.Add(t); }
-    void Shuffle<T>(List<T> list)
-    {
-        for (int i = 0; i < list.Count; i++)
-        { int r = UnityEngine.Random.Range(i, list.Count); (list[i], list[r]) = (list[r], list[i]); }
-    }
-
-    // -------- Turn loop --------
     void StartTurn()
     {
         if (!roundActive) return;
-
         if (sPlayers.All(p => p.Eliminated)) { EndRoundBySurvivorOrHighest(); return; }
 
+        // advance to next alive player if needed
         while (sPlayers[currentIndex].Eliminated)
             currentIndex = (currentIndex + 1) % sPlayers.Count;
 
-        sPlayers[currentIndex].Protected = false; // Handmaid wears off at start of your turn
+        // handmaid wears off at start of your turn
+        sPlayers[currentIndex].Protected = false;
 
+        // draw a card if deck not empty
+        var actor = sPlayers[currentIndex];
         if (deck.Count > 0)
         {
             var c = deck[0]; deck.RemoveAt(0);
-            sPlayers[currentIndex].Hand.Add(c);
-            TargetGiveCard(sPlayers[currentIndex].Conn, c);
+            actor.Hand.Add(c);
+            TargetGiveCard(actor.Conn, c);
         }
 
-        bool mustCountess = MustPlayCountess(sPlayers[currentIndex].Hand);
-        TargetYourTurn(sPlayers[currentIndex].Conn, mustCountess);
+        bool mustCountess = MustPlayCountess(actor.Hand);
+        TargetYourTurn(actor.Conn, mustCountess);
         BroadcastState();
     }
 
@@ -154,7 +182,7 @@ public class GameController : NetworkBehaviour
         StartTurn();
     }
 
-    // -------- Public state to all clients --------
+    // ===== Networking: public state & messages =====
     void BroadcastState()
     {
         var ps = new PublicState
@@ -190,20 +218,33 @@ public class GameController : NetworkBehaviour
     void TargetShowPeek(NetworkConnection target, string targetPlayer, CardType card)
         => HandUI.Instance?.ShowPriestPeek(targetPlayer, card);
 
-    // -------- Commands from clients --------
+    // Chancellor: present 3 options to the actor (their other card + 2 drawn)
+    [TargetRpc]
+    void TargetChancellorChoice(NetworkConnection target, CardType[] options)
+        => ChancellorPrompt.Show(options, keep => PlayerActions.Local?.ChooseChancellor(keep)); // you provide this UI
+
+    [TargetRpc]
+    void TargetReplaceHand(NetworkConnection target, List<CardType> hand)
+        => HandUI.Instance?.ReplaceHand(hand);
+
+    // ===== Commands from clients =====
     [Command(requiresAuthority = false)]
     public void CmdPlayCard(uint actorNetId, CardType card, uint targetNetId, CardType guardGuess)
     {
         if (!roundActive) return;
 
         int actorIdx = sPlayers.FindIndex(p => p.NetId == actorNetId);
-        if (actorIdx != currentIndex || actorIdx < 0) return;
+        if (actorIdx < 0 || actorIdx != currentIndex) return;
+
         var actor = sPlayers[actorIdx];
         if (actor.Eliminated) return;
+
         if (!actor.Hand.Contains(card)) return;
+
+        // Enforce Countess rule
         if (card != CardType.Countess && MustPlayCountess(actor.Hand)) return;
 
-        // play it
+        // play: move from hand into discards (face-up)
         actor.Hand.Remove(card);
         actor.Discards.Add(card);
 
@@ -214,12 +255,14 @@ public class GameController : NetworkBehaviour
         {
             case CardType.Guard: ResolveGuard(actor, targetNetId, guardGuess); break;
             case CardType.Priest: ResolvePriest(actor, targetNetId); break;
-            case CardType.Baron: ResolveBaron(actor, targetNetId); break;         // TODO Phase 2
-            case CardType.Handmaid: ResolveHandmaid(actor); break;         // TODO
-            case CardType.Prince: ResolvePrince(actor, targetNetId); break;         // TODO
-            case CardType.King: ResolveKing(actor, targetNetId); break;         // TODO
+            case CardType.Baron: ResolveBaron(actor, targetNetId); break;
+            case CardType.Handmaid: ResolveHandmaid(actor); break;
+            case CardType.Prince: ResolvePrince(actor, targetNetId); break;
+            case CardType.King: ResolveKing(actor, targetNetId); break;
             case CardType.Countess: RpcLog($"{actor.Name} played Countess."); break;
-            case CardType.Princess: ResolvePrincess(actor); break;         // TODO
+            case CardType.Princess: ResolvePrincess(actor); break;
+            case CardType.Chancellor: ResolveChancellor(actor); break;
+            default: RpcLog($"{actor.Name} played {card}."); break;
         }
 
         BroadcastState();
@@ -227,45 +270,203 @@ public class GameController : NetworkBehaviour
         if (roundActive) EndTurnAdvance();
     }
 
-    // -------- Resolvers (Guard + Priest fully, others are stubs to fill next) --------
-    void ResolveGuard(SPlayer actor, uint targetNetId, CardType guess)
+    // Chancellor choice coming back from the client
+    [Command(requiresAuthority = false)]
+    public void CmdChancellorKeep(uint actorNetId, CardType keep)
     {
-        if (guess == 0 || guess == CardType.Guard) { RpcLog("Guard must guess a non-Guard card."); return; }
-        var target = sPlayers.FirstOrDefault(p => p.NetId == targetNetId);
-        if (target == null || target.Eliminated || target.Protected) { RpcLog($"{actor.Name} played Guard, invalid target."); return; }
+        if (!roundActive) return;
+        if (!chancellorPending.TryGetValue(actorNetId, out var options)) return;
 
-        var targetCard = target.Hand.FirstOrDefault();
-        if (targetCard == guess) { Eliminate(target); RpcLog($"{actor.Name} guessed {guess} — {target.Name} eliminated!"); }
-        else RpcLog($"{actor.Name} guessed {guess} — wrong.");
+        var actor = sPlayers.FirstOrDefault(p => p.NetId == actorNetId);
+        if (actor == null || actor.Eliminated) return;
+
+        // keep exactly one of the options
+        if (!options.Contains(keep)) return;
+
+        // Clear actor's hand; set to kept card
+        actor.Hand.Clear();
+        actor.Hand.Add(keep);
+        TargetReplaceHand(actor.Conn, new List<CardType>(actor.Hand));
+
+        // other two go to bottom (order doesn't matter here)
+        foreach (var c in options)
+            if (!EqualityComparer<CardType>.Default.Equals(c, keep))
+                deck.Add(c);
+
+        chancellorPending.Remove(actorNetId);
+        RpcLog($"{actor.Name} kept {keep} (Chancellor).");
+        BroadcastState();
     }
 
+    // ===== Resolvers =====
+
+    // Guard — guess a non-Guard; if correct, target eliminated
+    void ResolveGuard(SPlayer actor, uint targetNetId, CardType guess)
+    {
+        if (guess == CardType.Guard || guess == 0)
+        {
+            RpcLog("Guard must guess a non-Guard card."); return;
+        }
+
+        var target = GetValidTarget(targetNetId, requireNotProtected: true, allowSelf: false);
+        if (target == null) { RpcLog($"{actor.Name} played Guard, invalid target."); return; }
+
+        var targetCard = target.Hand.FirstOrDefault();
+        if (targetCard == guess)
+        {
+            RpcLog($"{actor.Name} guessed {guess} — {target.Name} eliminated!");
+            Eliminate(target);
+        }
+        else
+        {
+            RpcLog($"{actor.Name} guessed {guess} — wrong.");
+        }
+    }
+
+    // Priest — peek target’s hand (private)
     void ResolvePriest(SPlayer actor, uint targetNetId)
     {
-        var target = sPlayers.FirstOrDefault(p => p.NetId == targetNetId);
-        if (target == null || target.Eliminated || target.Protected) { RpcLog($"{actor.Name} played Priest, invalid target."); return; }
+        var target = GetValidTarget(targetNetId, requireNotProtected: true, allowSelf: false);
+        if (target == null) { RpcLog($"{actor.Name} played Priest, invalid target."); return; }
+
         TargetShowPeek(actor.Conn, target.Name, target.Hand.FirstOrDefault());
         RpcLog($"{actor.Name} looked at {target.Name}'s hand.");
     }
 
-    // ---- TODO next phases (you’ll fill these in) ----
-    void ResolveBaron(SPlayer actor, uint targetNetId) { /* compare hands, lower eliminated; tie = none */ RpcLog($"{actor.Name} played Baron."); }
-    void ResolveHandmaid(SPlayer actor) { actor.Protected = true; RpcLog($"{actor.Name} is protected until their next turn."); }
-    void ResolvePrince(SPlayer actor, uint targetNetId) { RpcLog($"{actor.Name} played Prince."); /* target discards; if Princess -> eliminated; else draw replacement (TargetGiveCard) */ }
-    void ResolveKing(SPlayer actor, uint targetNetId) { RpcLog($"{actor.Name} played King.");   /* swap hands between actor and target with TargetReplaceHand(...) */ }
-    void ResolvePrincess(SPlayer actor) { Eliminate(actor); RpcLog($"{actor.Name} discarded Princess and is eliminated!"); }
+    // Baron — compare hands; lower value eliminated (tie = none)
+    void ResolveBaron(SPlayer actor, uint targetNetId)
+    {
+        var target = GetValidTarget(targetNetId, requireNotProtected: true, allowSelf: false);
+        if (target == null) { RpcLog($"{actor.Name} played Baron, invalid target."); return; }
 
-    [TargetRpc]
-    void TargetReplaceHand(NetworkConnection target, List<CardType> hand)
-        => HandUI.Instance?.ReplaceHand(hand);
+        var a = actor.Hand.FirstOrDefault();
+        var b = target.Hand.FirstOrDefault();
+        int va = CardDB.Value[a];
+        int vb = CardDB.Value[b];
 
-    // -------- helpers --------
+        if (va == vb) { RpcLog($"{actor.Name} and {target.Name} tied ({a} vs {b}). Nobody is eliminated."); return; }
+
+        var loser = (va < vb) ? actor : target;
+        RpcLog($"{actor.Name} compares with {target.Name}: {(va < vb ? "loses" : "wins")} ({a} vs {b}).");
+        Eliminate(loser);
+    }
+
+    // Handmaid — protection until your next turn (already cleared at StartTurn)
+    void ResolveHandmaid(SPlayer actor)
+    {
+        actor.Protected = true;
+        RpcLog($"{actor.Name} is protected until their next turn.");
+    }
+
+    // Prince — target (including self) discards and draws a new card; if Princess, eliminated
+    void ResolvePrince(SPlayer actor, uint targetNetId)
+    {
+        var target = GetValidTarget(targetNetId, requireNotProtected: true, allowSelf: true);
+        if (target == null) { RpcLog($"{actor.Name} played Prince, invalid target."); return; }
+
+        var discarded = target.Hand.FirstOrDefault();
+        // move to discards (public)
+        target.Hand.Clear();
+        target.Discards.Add(discarded);
+        if (discarded == CardType.Spy) spyPlayedThisRound.Add(target.NetId);
+
+        if (discarded == CardType.Princess)
+        {
+            RpcLog($"{actor.Name} forced {target.Name} to discard Princess — eliminated!");
+            Eliminate(target);
+        }
+        else
+        {
+            RpcLog($"{actor.Name} forced {target.Name} to discard {discarded}.");
+            // draw replacement if deck not empty
+            if (deck.Count > 0 && !target.Eliminated)
+            {
+                var c = deck[0]; deck.RemoveAt(0);
+                target.Hand.Add(c);
+                TargetGiveCard(target.Conn, c);
+            }
+        }
+    }
+
+    // King — swap hands with another player
+    void ResolveKing(SPlayer actor, uint targetNetId)
+    {
+        var target = GetValidTarget(targetNetId, requireNotProtected: true, allowSelf: false);
+        if (target == null) { RpcLog($"{actor.Name} played King, invalid target."); return; }
+
+        var temp = new List<CardType>(actor.Hand);
+        actor.Hand.Clear(); actor.Hand.AddRange(target.Hand);
+        target.Hand.Clear(); target.Hand.AddRange(temp);
+
+        TargetReplaceHand(actor.Conn, new List<CardType>(actor.Hand));
+        TargetReplaceHand(target.Conn, new List<CardType>(target.Hand));
+
+        RpcLog($"{actor.Name} traded hands with {target.Name}.");
+    }
+
+    // Princess — you discard Princess: eliminated immediately
+    void ResolvePrincess(SPlayer actor)
+    {
+        Eliminate(actor);
+        RpcLog($"{actor.Name} discarded Princess and is eliminated!");
+    }
+
+    // Chancellor — draw 2; keep 1; put the other 2 (from your hand) on bottom
+    void ResolveChancellor(SPlayer actor)
+    {
+        // collect options = (your remaining hand) + draw up to 2
+        var options = new List<CardType>(actor.Hand); // after playing Chancellor there is typically 1 card left
+        for (int i = 0; i < 2 && deck.Count > 0; i++)
+        {
+            var c = deck[0]; deck.RemoveAt(0);
+            options.Add(c);
+        }
+
+        // if somehow < 2 options, nothing special to do
+        if (options.Count <= 1)
+        {
+            RpcLog($"{actor.Name} played Chancellor (not enough cards to choose).");
+            return;
+        }
+
+        // ask client which to keep
+        chancellorPending[actor.NetId] = options;
+        TargetChancellorChoice(actor.Conn, options.ToArray());
+        RpcLog($"{actor.Name} played Chancellor and drew {options.Count - actor.Hand.Count}.");
+    }
+
+    // ===== helpers =====
     void DealTo(SPlayer p, int count)
     {
         for (int i = 0; i < count && deck.Count > 0; i++)
-        { var c = deck[0]; deck.RemoveAt(0); p.Hand.Add(c); TargetGiveCard(p.Conn, c); }
+        {
+            var c = deck[0]; deck.RemoveAt(0);
+            p.Hand.Add(c);
+            TargetGiveCard(p.Conn, c);
+        }
     }
 
-    void Eliminate(SPlayer p) { p.Eliminated = true; }
+    SPlayer GetValidTarget(uint netId, bool requireNotProtected, bool allowSelf)
+    {
+        var t = sPlayers.FirstOrDefault(p => p.NetId == netId);
+        if (t == null || t.Eliminated) return null;
+        if (requireNotProtected && t.Protected) return null;
+        if (!allowSelf && t == sPlayers[currentIndex]) return null;
+        return t;
+    }
+
+    void Eliminate(SPlayer p)
+    {
+        if (p.Eliminated) return;
+        // reveal remaining hand on elimination
+        foreach (var c in p.Hand)
+        {
+            p.Discards.Add(c);
+            if (c == CardType.Spy) spyPlayedThisRound.Add(p.NetId);
+        }
+        p.Hand.Clear();
+        p.Eliminated = true;
+    }
 
     void TryEndOfRound()
     {
@@ -276,6 +477,7 @@ public class GameController : NetworkBehaviour
 
     void EndRoundBySurvivorOrHighest()
     {
+        // Spy bonus: exactly one unique player used/discarded Spy this round = +1 token
         if (spyPlayedThisRound.Count == 1)
         {
             uint spyNetId = spyPlayedThisRound.First();
@@ -292,11 +494,31 @@ public class GameController : NetworkBehaviour
 
         if (alive.Count == 1) winner = alive[0];
         else
+        {
+            // highest card value among hands (everyone should have 1)
             winner = sPlayers.Where(p => !p.Eliminated && p.Hand.Count > 0)
-                             .OrderByDescending(p => (int)p.Hand[0]).FirstOrDefault();
+                             .OrderByDescending(p => CardDB.Value[p.Hand[0]])
+                             .FirstOrDefault();
+        }
 
-        if (winner != null) { winner.Score++; RpcLog($"{winner.Name} wins the round!"); }
+        if (winner != null)
+        {
+            winner.Score++;
+            RpcLog($"{winner.Name} wins the round!");
+        }
+
         roundActive = false;
+        BroadcastState();
         Invoke(nameof(StartNewRound), 2f);
+    }
+
+    // ===== utils =====
+    static void Shuffle<T>(List<T> list)
+    {
+        for (int i = 0; i < list.Count; i++)
+        {
+            int r = UnityEngine.Random.Range(i, list.Count);
+            (list[i], list[r]) = (list[r], list[i]);
+        }
     }
 }

@@ -8,6 +8,8 @@ public class PlayerNetwork : NetworkBehaviour
     public override void OnStartServer()
     {
         IsHost = connectionToClient != null && connectionToClient.connectionId == 0;
+        var fallback = $"Player {connectionToClient.connectionId}";
+        PlayerName = LobbyUI.LocalPlayerNameOr(fallback);
     }
 
     public override void OnStartLocalPlayer()

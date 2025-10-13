@@ -5,17 +5,20 @@ public class PlayerActions : NetworkBehaviour
 {
     public static PlayerActions Local;
 
-    void Start() { if (isLocalPlayer) Local = this; }
+    void Awake() { if (isLocalPlayer) Local = this; }
+    public override void OnStartLocalPlayer() { Local = this; }
 
-    public void PlayCard(CardType card, uint targetNetId = 0, CardType? guess = null)
+    // existing:
+    public void PlayCard(CardType card, uint targetNetId = 0, CardType guardGuess = 0)
     {
         if (!isLocalPlayer) return;
-        CmdPlay(card, targetNetId, guess.HasValue ? guess.Value : (CardType)0);
+        GameController.Instance.CmdPlayCard(netIdentity.netId, card, targetNetId, guardGuess);
     }
 
-    [Command]
-    void CmdPlay(CardType card, uint targetNetId, CardType guess)
-    {   // Route to the server authority
-        GameController.Instance?.CmdPlayCard(netIdentity.netId, card, targetNetId, guess);
+    // NEW: Chancellor keep one
+    public void ChooseChancellor(CardType keep)
+    {
+        if (!isLocalPlayer) return;
+        GameController.Instance.CmdChancellorKeep(netIdentity.netId, keep);
     }
 }

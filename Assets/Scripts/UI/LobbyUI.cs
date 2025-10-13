@@ -9,6 +9,7 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
+using UnityEngine.Windows;
 
 public class LobbyUI : MonoBehaviour
 {
@@ -44,6 +45,7 @@ public class LobbyUI : MonoBehaviour
 
     void Awake()
     {
+        ipInput.text = "localhost";
         Instance = this;
         // load last used name
         var saved = PlayerPrefs.GetString("playerName", "");
@@ -66,9 +68,10 @@ public class LobbyUI : MonoBehaviour
 
     public static string LocalPlayerNameOr(string fallback)
     {
-        var ui = FindObjectOfType<LobbyUI>();
-        if (ui != null && ui.nameInput != null && !string.IsNullOrWhiteSpace(ui.nameInput.text))
-            return ui.nameInput.text.Trim();
+        if(PlayerPrefs.GetString("playerName", "") != null)
+        {
+            return PlayerPrefs.GetString("playerName", "");
+        }
 
         return fallback;
     }
@@ -88,7 +91,7 @@ public class LobbyUI : MonoBehaviour
     }
 
     // --- helpers ---
-    bool IsHostInstance() => NetworkServer.active && NetworkClient.active; // host = server+client
+    static bool IsHostInstance() => NetworkServer.active && NetworkClient.active; // host = server+client
     void UpdateHostOnlyControls()
     {
         bool isHost = IsHostInstance();
@@ -121,7 +124,7 @@ public class LobbyUI : MonoBehaviour
         ShowClientLobby();
     }
 
-    public void StartGame()
+    public static void StartGame()
     {
         if (NetworkServer.active)
             NetworkManager.singleton.ServerChangeScene("GameScene");
@@ -200,7 +203,6 @@ public class LobbyUI : MonoBehaviour
     {
         Debug.Log($"[UI] Disconnected: {reason}");
         ShowPreHost();
-        // (Optional) show 'reason' somewhere on preHostPanel
     }
 
 

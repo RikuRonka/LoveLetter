@@ -1,16 +1,33 @@
+using System;
 using UnityEngine;
 using UnityEngine.UI;
 
 public class CardButtonUI : MonoBehaviour
 {
-    public Image cardImage;
+    [SerializeField] Image artImage;  // drag the Image that shows the card
+    [SerializeField] Button button;   // drag the Button on the root
 
-    public void Setup(Sprite art, System.Action onClick)
+    void Reset()
     {
-        cardImage.sprite = art;
+        if (!artImage) artImage = GetComponentInChildren<Image>();
+        if (!button) button = GetComponent<Button>();
+    }
 
-        var btn = GetComponent<Button>();
-        btn.onClick.RemoveAllListeners();
-        btn.onClick.AddListener(() => onClick?.Invoke());
+    public void Setup(Sprite art, Action onClick)
+    {
+        // lazy fallback in case fields weren’t wired
+        if (!artImage) artImage = GetComponentInChildren<Image>();
+        if (!button) button = GetComponent<Button>();
+
+        if (artImage) artImage.sprite = art;  // art can be null; Image accepts null
+        if (button)
+        {
+            button.onClick.RemoveAllListeners();
+            if (onClick != null) button.onClick.AddListener(() => onClick());
+        }
+        else
+        {
+            Debug.LogWarning("[CardButtonUI] Button missing on prefab.", this);
+        }
     }
 }

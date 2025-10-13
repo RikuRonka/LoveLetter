@@ -1486,7 +1486,6 @@ GameObject:
   m_Component:
   - component: {fileID: 910298047}
   - component: {fileID: 910298046}
-  - component: {fileID: 910298045}
   - component: {fileID: 910298049}
   m_Layer: 0
   m_Name: LoveLetterNetworkManager
@@ -1495,20 +1494,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &910298045
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 910298044}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 6442dc8070ceb41f094e44de0bf87274, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Mirror::Mirror.NetworkManagerHUD
-  offsetX: 0
-  offsetY: 0
 --- !u!114 &910298046
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1535,8 +1520,8 @@ MonoBehaviour:
   disconnectInactiveTimeout: 60
   exceptionsDisconnect: 1
   authenticator: {fileID: 0}
-  offlineScene: Assets/Scenes/MainMenu.unity
-  onlineScene: Assets/Scenes/GameScene.unity
+  offlineScene: 
+  onlineScene: 
   offlineSceneLoadDelay: 0
   playerPrefab: {fileID: 1583932484556535331, guid: a794e94a70e4d8f40b577278d9ebd497, type: 3}
   autoCreatePlayer: 1
@@ -3474,7 +3459,7 @@ MonoBehaviour:
     m_Top: 0
     m_Bottom: 0
   m_ChildAlignment: 0
-  m_Spacing: -157
+  m_Spacing: -366
   m_ChildForceExpandWidth: 1
   m_ChildForceExpandHeight: 1
   m_ChildControlWidth: 0
@@ -3607,7 +3592,7 @@ MonoBehaviour:
   ipText: {fileID: 587140433}
   startGameButton: {fileID: 1351035087}
   playerListRoot: {fileID: 2046831479}
-  playerListItemPrefab: {fileID: 0}
+  playerListItemPrefab: {fileID: 3515289446184510029, guid: 3e89ecea8371b3648b54d12c3925e046, type: 3}
   hostButton: {fileID: 454249030}
   joinButton: {fileID: 1685849657}
   stopHostingButton: {fileID: 1880076533}
