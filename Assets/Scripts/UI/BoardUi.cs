@@ -9,20 +9,40 @@ public class BoardUI : MonoBehaviour
     [SerializeField] TMP_Text turnText;   // "Turn: Alice"
     [SerializeField] TMP_Text logText;    // scrolling log or simple label
 
+    [Header("Turn Colors")]
+    [SerializeField] Color yourTurnColor = new Color(0.20f, 0.85f, 0.35f); // green
+    [SerializeField] Color oppTurnColor = new Color(0.90f, 0.30f, 0.30f); // red
+
     void Awake() => Instance = this;
 
     public void RenderState(PublicState s)
     {
-        // turn name
-        string name = "?";
-        if (s.Players != null &&
-            s.CurrentIndex >= 0 &&
-            s.CurrentIndex < s.Players.Count)
-            name = s.Players[s.CurrentIndex].Name;
+        if (turnText == null || s.Players == null || s.Players.Count == 0)
+            return;
 
-        if (turnText) turnText.text = $"Turn: {name}";
+        // who’s turn per server
+        var cur = (s.CurrentIndex >= 0 && s.CurrentIndex < s.Players.Count)
+                  ? s.Players[s.CurrentIndex]
+                  : null;
 
-        // pass deck/burned to DeckUI
+        // local player netId (0 if unknown yet)
+        uint localId = PlayerNetwork.Local ? PlayerNetwork.Local.netId : 0;
+
+        bool isLocalTurn = (cur != null && cur.NetId == localId);
+
+        if (isLocalTurn)
+        {
+            turnText.text = "Your turn";
+            turnText.color = yourTurnColor;
+        }
+        else
+        {
+            string name = cur != null ? cur.Name : "?";
+            turnText.text = $"{name}'s turn";
+            turnText.color = oppTurnColor;
+        }
+
+        // forward deck/burned to DeckUI (if you use it)
         DeckUI.I?.Render(s.DeckCount, s.BurnedCount);
     }
 

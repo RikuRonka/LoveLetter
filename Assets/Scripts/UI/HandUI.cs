@@ -12,6 +12,7 @@ public class HandUI : MonoBehaviour
     readonly List<CardType> localHand = new();
     bool myTurn; bool mustCountess;
 
+
     void Awake() => Instance = this;
 
     public void AddCard(CardType c) { localHand.Add(c); Refresh(); }
@@ -20,6 +21,8 @@ public class HandUI : MonoBehaviour
 
     void Refresh()
     {
+
+
         foreach (Transform t in handRoot) Destroy(t.gameObject);
 
         for (int i = 0; i < localHand.Count; i++)
@@ -28,6 +31,8 @@ public class HandUI : MonoBehaviour
             var go = Instantiate(cardButtonPrefab, handRoot);
 
             var view = go.GetComponent<CardButtonUI>();
+
+            bool playable = myTurn && (!mustCountess || c == CardType.Countess);
             if (!view)
             {
                 Debug.LogError("cardButtonPrefab must have CardButtonUI.", go);
@@ -38,23 +43,20 @@ public class HandUI : MonoBehaviour
             var art = CardDB.Sprite(c);
             int idx = i;
 
-            view.Setup(art, () =>
+            view.Setup(CardDB.Sprite(c), () =>
             {
                 if (!myTurn) return;
-
-                // Countess rule UI enforcement
                 if (mustCountess && c != CardType.Countess) return;
 
-                // TODO: show proper target/guess pickers when needed
+                // (target/guess selection if needed)
                 PlayerActions.Local?.PlayCard(c, 0, 0);
-                myTurn = false; // prevent double clicks until server advances
+                myTurn = false;
                 Refresh();
-            });
+            }, playable);
 
             // interactability
             var btn = go.GetComponent<Button>();
-            if (btn)
-                btn.interactable = myTurn && (!mustCountess || c == CardType.Countess);
+            if (btn) btn.interactable = playable;
         }
     }
 

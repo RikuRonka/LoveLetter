@@ -81,12 +81,14 @@ public class GameController : NetworkBehaviour
         {
             var conn = kv.Value;
             if (!conn?.identity) continue;
+
             var pn = conn.identity.GetComponent<PlayerNetwork>();
             sPlayers.Add(new SPlayer
             {
                 Conn = conn,
                 Identity = conn.identity,
-                Name = pn ? pn.PlayerName : $"Player {conn.connectionId}",
+                // store a fallback; we'll use the live SyncVar when broadcasting
+                Name = pn && !string.IsNullOrWhiteSpace(pn.PlayerName) ? pn.PlayerName : $"Player {conn.connectionId}",
                 Eliminated = false,
                 Protected = false,
                 Score = 0
@@ -190,14 +192,19 @@ public class GameController : NetworkBehaviour
             CurrentIndex = currentIndex,
             DeckCount = deck.Count,
             BurnedCount = burnedCount,
-            Players = sPlayers.Select(p => new PublicPlayer
+            Players = sPlayers.Select(p =>
             {
-                NetId = p.NetId,
-                Name = p.Name,
-                Eliminated = p.Eliminated,
-                Protected = p.Protected,
-                Discards = new List<CardType>(p.Discards),
-                Score = p.Score
+                // prefer the synced name from the component
+                var liveName = p.Identity ? p.Identity.GetComponent<PlayerNetwork>()?.PlayerName : null;
+                return new PublicPlayer
+                {
+                    NetId = p.NetId,
+                    Name = string.IsNullOrWhiteSpace(liveName) ? p.Name : liveName,
+                    Eliminated = p.Eliminated,
+                    Protected = p.Protected,
+                    Discards = new List<CardType>(p.Discards),
+                    Score = p.Score
+                };
             }).ToList()
         };
         RpcState(ps);
@@ -253,7 +260,25 @@ public class GameController : NetworkBehaviour
 
         switch (card)
         {
-            case CardType.Guard: ResolveGuard(actor, targetNetId, guardGuess); break;
+            case CardType.Guard:
+            {
+                var valid = sPlayers.Where(p => !p.Eliminated && !p.Protected && p != actor).ToList();
+                if (valid.Count == 0)
+                {
+                    RpcLog($"{actor.Name} played Guard, but no valid targets.");
+                    BroadcastState();
+                    TryEndOfRound();
+                    if (roundActive) EndTurnAdvance();
+                    return;
+                }
+
+                uint[] ids = valid.Select(p => p.NetId).ToArray();
+                string[] names = valid.Select(p => p.Name).ToArray();
+
+                TargetGuardPrompt(actor.Conn, ids, names);   // <— ONE TargetRpc
+                RpcLog($"{actor.Name} played Guard. Choose a target and guess.");
+                return; // IMPORTANT: wait for client response
+            }
             case CardType.Priest: ResolvePriest(actor, targetNetId); break;
             case CardType.Baron: ResolveBaron(actor, targetNetId); break;
             case CardType.Handmaid: ResolveHandmaid(actor); break;
@@ -269,6 +294,69 @@ public class GameController : NetworkBehaviour
         TryEndOfRound();
         if (roundActive) EndTurnAdvance();
     }
+
+    List<PublicPlayer> BuildPublicTargets(SPlayer actor)
+    {
+        return sPlayers
+            .Where(p => !p.Eliminated && !p.Protected && p != actor)
+            .Select(p => new PublicPlayer
+            {
+                NetId = p.NetId,
+                Name = p.Name,
+                Eliminated = p.Eliminated,
+                Protected = p.Protected,
+                Discards = new List<CardType>(p.Discards),
+                Score = p.Score
+            })
+            .ToList();
+    }
+
+    [TargetRpc]
+    void TargetGuardPrompt(NetworkConnection target, uint[] targetIds, string[] targetNames)
+    {
+        var guessOptions = CardDB.All.Where(c => c != CardType.Guard).ToList();
+        GuardPrompt.Show(targetIds, targetNames, guessOptions, (chosenTarget, chosenGuess) =>
+        {
+            PlayerActions.Local?.ChooseGuard(chosenTarget, chosenGuess);
+        });
+    }
+
+
+    [Command(requiresAuthority = false)]
+    public void CmdGuardGuess(uint actorNetId, uint targetNetId, CardType guess)
+    {
+        if (!roundActive) return;
+
+        var actor = sPlayers.FirstOrDefault(p => p.NetId == actorNetId);
+        if (actor == null || actor.Eliminated) return;
+
+        var target = GetValidTarget(targetNetId, requireNotProtected: true, allowSelf: false);
+        if (target == null) { RpcLog($"{actor.Name} Guard guess: invalid target."); EndAfter(); return; }
+
+        if (guess == 0 || guess == CardType.Guard) { RpcLog("Guard must guess a non-Guard card."); EndAfter(); return; }
+
+        var targetCard = target.Hand.FirstOrDefault();
+        if (targetCard == guess)
+        {
+            RpcLog($"{actor.Name} guessed {guess} — {target.Name} eliminated!");
+            Eliminate(target);
+        }
+        else
+        {
+            RpcLog($"{actor.Name} guessed {guess} — wrong.");
+        }
+
+        EndAfter();
+
+        void EndAfter()
+        {
+            BroadcastState();
+            TryEndOfRound();
+            if (roundActive) EndTurnAdvance();
+        }
+    }
+
+
 
     // Chancellor choice coming back from the client
     [Command(requiresAuthority = false)]
@@ -300,28 +388,6 @@ public class GameController : NetworkBehaviour
 
     // ===== Resolvers =====
 
-    // Guard — guess a non-Guard; if correct, target eliminated
-    void ResolveGuard(SPlayer actor, uint targetNetId, CardType guess)
-    {
-        if (guess == CardType.Guard || guess == 0)
-        {
-            RpcLog("Guard must guess a non-Guard card."); return;
-        }
-
-        var target = GetValidTarget(targetNetId, requireNotProtected: true, allowSelf: false);
-        if (target == null) { RpcLog($"{actor.Name} played Guard, invalid target."); return; }
-
-        var targetCard = target.Hand.FirstOrDefault();
-        if (targetCard == guess)
-        {
-            RpcLog($"{actor.Name} guessed {guess} — {target.Name} eliminated!");
-            Eliminate(target);
-        }
-        else
-        {
-            RpcLog($"{actor.Name} guessed {guess} — wrong.");
-        }
-    }
 
     // Priest — peek target’s hand (private)
     void ResolvePriest(SPlayer actor, uint targetNetId)

@@ -4,7 +4,7 @@ using UnityEngine;
 public class PlayerActions : NetworkBehaviour
 {
     public static PlayerActions Local;
-
+    public uint MyNetId => netId;
     void Awake() { if (isLocalPlayer) Local = this; }
     public override void OnStartLocalPlayer() { Local = this; }
 
@@ -15,10 +15,15 @@ public class PlayerActions : NetworkBehaviour
         GameController.Instance.CmdPlayCard(netIdentity.netId, card, targetNetId, guardGuess);
     }
 
-    // NEW: Chancellor keep one
     public void ChooseChancellor(CardType keep)
     {
         if (!isLocalPlayer) return;
         GameController.Instance.CmdChancellorKeep(netIdentity.netId, keep);
     }
+
+    public void ChooseGuard(uint targetNetId, CardType guess)
+    {
+        GameController.Instance.CmdGuardGuess(MyNetId, targetNetId, guess);
+    }
+
 }

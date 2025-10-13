@@ -1,7 +1,9 @@
 using Mirror;
+using UnityEngine;
 
 public class PlayerNetwork : NetworkBehaviour
 {
+    public static PlayerNetwork Local;
     [SyncVar(hook = nameof(OnNameChanged))] public string PlayerName;
     [SyncVar(hook = nameof(OnHostChanged))] public bool IsHost;
 
@@ -14,17 +16,19 @@ public class PlayerNetwork : NetworkBehaviour
 
     public override void OnStartLocalPlayer()
     {
-        // take from your LobbyUI cached name
-        CmdSetName(LobbyUI.LocalPlayerNameOr("Player"));
+        Local = this;
+        string n = LobbyUI.Instance ? LobbyUI.LocalPlayerName : PlayerPrefs.GetString("playerName", "Player");
+        if (string.IsNullOrWhiteSpace(n)) n = $"Player {netId}";
+        CmdSetName(n);
     }
 
-    [Command]
-    void CmdSetName(string n)
+    [Command] void CmdSetName(string n) => PlayerName = Sanitize(n);
+
+    static string Sanitize(string s)
     {
-        if (string.IsNullOrWhiteSpace(n))
-            n = $"Player {connectionToClient.connectionId}";
-        if (n.Length > 20) n = n[..20];
-        PlayerName = n;
+        s = string.IsNullOrWhiteSpace(s) ? "Player" : s.Trim();
+        if (s.Length > 20) s = s[..20];
+        return s;
     }
 
     void OnNameChanged(string _, string __)   { LobbyUI.Instance?.RefreshNow(); }

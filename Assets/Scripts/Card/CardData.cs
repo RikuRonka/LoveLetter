@@ -64,6 +64,10 @@ public static class CardDB
         { CardType.Princess, "If you discard this, you are eliminated." },
     };
 
+    public static IEnumerable<CardType> All =>
+    (CardType[])System.Enum.GetValues(typeof(CardType));
+
+
     // Client-side sprite cache (lazy)
     static readonly Dictionary<CardType, Sprite> _sprite = new();
 

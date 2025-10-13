@@ -28,6 +28,7 @@ public class LobbyUI : MonoBehaviour
     [SerializeField] Button hostButton;
     [SerializeField] Button joinButton;
     [SerializeField] Button stopHostingButton;
+    [SerializeField] TMP_Text hostLeftStatus;
 
     public static LobbyUI Instance { get; private set; }
     public static string LocalPlayerName { get; private set; } = "Player";
@@ -53,7 +54,14 @@ public class LobbyUI : MonoBehaviour
         ShowPreHost();
     }
 
-    void OnEnable() => SceneManager.sceneLoaded += OnSceneLoaded;
+    void OnEnable() { 
+        SceneManager.sceneLoaded += OnSceneLoaded;
+        if (!string.IsNullOrEmpty(LLNetworkManager.LastDisconnectReason))
+        {
+            ShowDisconnected(LLNetworkManager.LastDisconnectReason);
+            LLNetworkManager.LastDisconnectReason = null;
+        }
+    }
     void OnDisable()
     {
         SceneManager.sceneLoaded -= OnSceneLoaded;
@@ -202,6 +210,7 @@ public class LobbyUI : MonoBehaviour
     public void ShowDisconnected(string reason)
     {
         Debug.Log($"[UI] Disconnected: {reason}");
+        if (hostLeftStatus) hostLeftStatus.text = reason;
         ShowPreHost();
     }
 
