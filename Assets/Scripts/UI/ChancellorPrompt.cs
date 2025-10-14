@@ -7,73 +7,109 @@ public class ChancellorPrompt : MonoBehaviour
     public static ChancellorPrompt Instance;
 
     [Header("UI")]
-    [SerializeField] GameObject panel;
-    [SerializeField] Transform optionsRoot;
-    [SerializeField] GameObject optionButtonPrefab;    
-    [SerializeField] Transform cardRoot;
-    [SerializeField] GameObject cardButtonPrefab;
+    [SerializeField] GameObject panel;                 // root to toggle on/off
+    [SerializeField] Transform optionsRoot;            // where the 3 options go (Layout Group)
+    [SerializeField] GameObject optionButtonPrefab;    // usually your CardButton prefab
+    [SerializeField] Transform cardRoot;               // optional: show kept card here
+    [SerializeField] GameObject cardButtonPrefab;      // usually your CardButton prefab
 
-    Action<CardType> onPick;
+    Action<CardType> _onKeep;
 
     void Awake() => Instance = this;
 
-    // called by GameController via TargetChancellorChoice
+    void Reset()
+    {
+        if (!panel && transform.childCount > 0) panel = transform.GetChild(0).gameObject;
+        // try to auto-find common names to reduce wiring mistakes
+        if (!optionsRoot) optionsRoot = transform.Find("Panel/OptionsRoot");
+        if (!cardRoot) cardRoot = transform.Find("Panel/CardRoot");
+    }
+
+    /// <summary>
+    /// Opens the Chancellor choice UI with 3 cards, and invokes onKeep with the chosen card.
+    /// </summary>
     public static void Show(CardType[] options, Action<CardType> onKeep)
     {
-        var inst = Instance;
-        if (!inst) return;
+        var i = Instance ?? FindObjectOfType<ChancellorPrompt>(true);
+        if (i == null) { Debug.LogError("[ChancellorPrompt] No instance in scene."); return; }
+        i._onKeep = onKeep;
+        i.Build(options);
+    }
 
-        inst.gameObject.SetActive(true);
+    void Build(CardType[] options)
+    {
+        if (panel) panel.SetActive(true); else gameObject.SetActive(true);
 
-        // clear old
-        foreach (Transform child in inst.cardRoot)
-            Destroy(child.gameObject);
+        Clear(optionsRoot);
+        Clear(cardRoot);
+
+        if (options == null || options.Length == 0)
+        {
+            Debug.LogWarning("[ChancellorPrompt] No options provided.");
+            Close();
+            return;
+        }
 
         foreach (var card in options)
         {
-            var go = Instantiate(inst.cardButtonPrefab, inst.cardRoot);
+            var prefab = optionButtonPrefab ? optionButtonPrefab : cardButtonPrefab;
+            var go = Instantiate(prefab, optionsRoot);
+
+            // Prefer CardButtonUI if present (your hover/highlight logic)
             var ui = go.GetComponent<CardButtonUI>();
-
-            // this is the missing piece: assign sprite from CardDB
-            ui.Setup(CardDB.Sprite(card), () =>
+            if (ui != null)
             {
-                onKeep?.Invoke(card);
-                inst.gameObject.SetActive(false);
-            }, true);
+                ui.Setup(CardDB.Sprite(card), () => Choose(card), true);
+            }
+            else
+            {
+                // Fallback if prefab doesn’t have CardButtonUI
+                var img = go.GetComponentInChildren<Image>(true);
+                if (img) img.sprite = CardDB.Sprite(card);
+
+                var btn = go.GetComponent<Button>();
+                if (btn) btn.onClick.AddListener(() => Choose(card));
+            }
         }
     }
 
-
-    void InternalShow(CardType[] options, Action<CardType> onPick)
+    void Choose(CardType keep)
     {
-        this.onPick = onPick;
-        ClearChildren();
+        // notify game logic first
+        _onKeep?.Invoke(keep);
 
-        foreach (var ct in options)
+        // (Optional) show the kept card in CardRoot briefly
+        if (cardRoot && cardButtonPrefab)
         {
-            var go = Instantiate(optionButtonPrefab, optionsRoot);
-            var img = go.GetComponentInChildren<Image>();
-            if (img) img.sprite = CardDB.Sprite(ct);
-
-            var btn = go.GetComponent<Button>();
-            btn.onClick.RemoveAllListeners();
-            btn.onClick.AddListener(() => Pick(ct));
+            Clear(cardRoot);
+            var go = Instantiate(cardButtonPrefab, cardRoot);
+            var ui = go.GetComponent<CardButtonUI>();
+            if (ui != null)
+            {
+                ui.Setup(CardDB.Sprite(keep), null, false);  // not playable
+            }
+            else
+            {
+                var img = go.GetComponentInChildren<Image>(true);
+                if (img) img.sprite = CardDB.Sprite(keep);
+                var btn = go.GetComponent<Button>();
+                if (btn) btn.interactable = false;
+            }
         }
 
-        panel.SetActive(true);
+        // close immediately (you can delay if you want the kept card to linger)
+        Close();
     }
 
-    void Pick(CardType ct)
+    public void Close()
     {
-        panel.SetActive(false);
-        ClearChildren();
-        onPick?.Invoke(ct);
-        onPick = null;
+        if (panel) panel.SetActive(false); else gameObject.SetActive(false);
     }
 
-    void ClearChildren()
+    static void Clear(Transform root)
     {
-        for (int i = optionsRoot.childCount - 1; i >= 0; i--)
-            Destroy(optionsRoot.GetChild(i).gameObject);
+        if (!root) return;
+        for (int i = root.childCount - 1; i >= 0; i--)
+            Destroy(root.GetChild(i).gameObject);
     }
 }

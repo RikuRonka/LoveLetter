@@ -60,6 +60,15 @@ public class HandUI : MonoBehaviour
         }
     }
 
-    public void ShowPriestPeek(string name, CardType ct)
-        => BoardUI.Instance?.Log($"(Private) {name} has {ct}");
+    public void ShowPriestPeek(string name, CardType c)
+    {
+        BoardUI.Instance?.Log($"(Private) {name} has {c}");
+        PeekPrompt.Show(name, c);
+    }
+
+    public void EndTurn()
+    {
+        myTurn = false;
+        Refresh();
+    }
 }

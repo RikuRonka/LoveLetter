@@ -17,9 +17,9 @@ public class PlayerActions : NetworkBehaviour
 
     public void ChooseChancellor(CardType keep)
     {
-        if (!isLocalPlayer) return;
-        GameController.Instance.CmdChancellorKeep(netIdentity.netId, keep);
+        GameController.Instance.CmdChancellorKeep(keep);
     }
+
 
     public void ChooseGuard(uint targetNetId, CardType guess)
     {
@@ -29,6 +29,11 @@ public class PlayerActions : NetworkBehaviour
     public void ChoosePriest(uint targetNetId)
     {
         GameController.Instance.CmdPriestTarget(netId, targetNetId);
+    }
+
+    public void ChooseBaron(uint targetNetId)
+    {
+        GameController.Instance.CmdBaronTarget(targetNetId);
     }
 
 }

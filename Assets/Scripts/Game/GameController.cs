@@ -28,6 +28,7 @@ public class GameController : NetworkBehaviour
 {
     public static GameController Instance { get; private set; }
     void Awake() => Instance = this;
+    readonly HashSet<uint> waitingChancellor = new();
 
     // ===== Server-only structures =====
     class SPlayer
@@ -210,6 +211,12 @@ public class GameController : NetworkBehaviour
         RpcState(ps);
     }
 
+    [TargetRpc]
+    void TargetFreezeUntilChoice(NetworkConnection target)
+    {
+        HandUI.Instance?.EndTurn();   // a small helper on the client (see below)
+    }
+
     [ClientRpc] void RpcState(PublicState s) => BoardUI.Instance?.RenderState(s);
     [ClientRpc] void RpcLog(string msg) { BoardUI.Instance?.Log(msg); Debug.Log(msg); }
 
@@ -303,13 +310,37 @@ public class GameController : NetworkBehaviour
                 RpcLog($"{actor.Name} played Priest. Choose a player to peek.");
                 return; // IMPORTANT: wait for client choice
             }
-            case CardType.Baron: ResolveBaron(actor, targetNetId); break;
+            case CardType.Baron:
+            {
+                var valid = sPlayers
+                    .Where(p => !p.Eliminated && !p.Protected && p != actor)
+                    .ToList();
+
+                if (valid.Count == 0)
+                {
+                    RpcLog($"{actor.Name} played Baron, but there are no valid targets.");
+                    BroadcastState();
+                    TryEndOfRound();
+                    if (roundActive) EndTurnAdvance();
+                    return;
+                }
+
+                uint[] ids = valid.Select(p => p.NetId).ToArray();
+                string[] names = valid.Select(p => p.Name).ToArray();
+
+                TargetBaronPrompt(actor.Conn, ids, names);
+                RpcLog($"{actor.Name} played Baron. Choose a player to compare hands with.");
+                return; // IMPORTANT: wait for client response
+            }
             case CardType.Handmaid: ResolveHandmaid(actor); break;
             case CardType.Prince: ResolvePrince(actor, targetNetId); break;
             case CardType.King: ResolveKing(actor, targetNetId); break;
             case CardType.Countess: RpcLog($"{actor.Name} played Countess."); break;
             case CardType.Princess: ResolvePrincess(actor); break;
-            case CardType.Chancellor: ResolveChancellor(actor); break;
+            case CardType.Chancellor:
+            ResolveChancellor(actor);
+            BroadcastState();
+            return;
             default: RpcLog($"{actor.Name} played {card}."); break;
         }
 
@@ -324,6 +355,79 @@ public class GameController : NetworkBehaviour
         {
             PlayerActions.Local?.ChoosePriest(chosenTarget);
         });
+    }
+
+    [TargetRpc]
+    void TargetBaronPrompt(NetworkConnection target, uint[] targetIds, string[] targetNames)
+    {
+        Debug.Log($"[Client] TargetBaronPrompt ids={targetIds.Length}");
+        TargetPrompt.ShowTargets(targetIds, targetNames, chosenTarget =>
+        {
+            Debug.Log($"[Client] Baron chosen target={chosenTarget}");
+            PlayerActions.Local?.ChooseBaron(chosenTarget);
+        });
+    }
+
+    [Command(requiresAuthority = false)]
+    public void CmdBaronTarget(uint targetNetId, NetworkConnectionToClient sender = null)
+    {
+        if (!roundActive) return;
+
+        // find actor from the SENDER (not connectionToClient)
+        var actor = sPlayers.FirstOrDefault(p => p.Conn == sender);
+        if (actor == null) { Debug.LogWarning("[SRV] Baron: actor not found for sender"); return; }
+
+        var target = GetValidTarget(targetNetId, requireNotProtected: true, allowSelf: false);
+        if (target == null)
+        {
+            RpcLog($"{actor.Name} played Baron, invalid target.");
+            Finish();
+            return;
+        }
+
+        var a = actor.Hand.FirstOrDefault();
+        var b = target.Hand.FirstOrDefault();
+        int va = CardDB.Value[a], vb = CardDB.Value[b];
+
+        if (va == vb)
+        {
+            TargetBaronCompare(actor.Conn, actor.Name, a, target.Name, b, "Tie — nobody is eliminated.");
+            TargetBaronCompare(target.Conn, actor.Name, a, target.Name, b, "Tie — nobody is eliminated.");
+            RpcLog($"{actor.Name} compared with {target.Name}: tie ({a} vs {b}).");
+        }
+        else
+        {
+            var loser = (va < vb) ? actor : target;
+            var winner = (loser == actor) ? target : actor;
+
+            TargetBaronCompare(actor.Conn, actor.Name, a, target.Name, b, $"{winner.Name} wins — {loser.Name} is eliminated!");
+            TargetBaronCompare(target.Conn, actor.Name, a, target.Name, b, $"{winner.Name} wins — {loser.Name} is eliminated!");
+
+            Eliminate(loser);
+            PushHandTo(loser); // keep hands in sync if not already
+            RpcLog($"{actor.Name} compared with {target.Name}: {(va < vb ? "loses" : "wins")} ({a} vs {b}).");
+        }
+
+        Finish();
+        return;
+
+        void Finish()
+        {
+            BroadcastState();
+            TryEndOfRound();
+            if (roundActive) EndTurnAdvance();
+        }
+    }
+
+
+    [TargetRpc]
+    void TargetBaronCompare(NetworkConnection target,
+                        string aName, CardType aCard,
+                        string bName, CardType bCard,
+                        string resultText)
+    {
+        Debug.Log("[Client] TargetBaronCompare modal");
+        ComparePrompt.Show(aName, aCard, bName, bCard, resultText);
     }
 
     [Command(requiresAuthority = false)]
@@ -418,32 +522,43 @@ public class GameController : NetworkBehaviour
 
 
 
-    // Chancellor choice coming back from the client
     [Command(requiresAuthority = false)]
-    public void CmdChancellorKeep(uint actorNetId, CardType keep)
+    public void CmdChancellorKeep(CardType keep)
     {
         if (!roundActive) return;
-        if (!chancellorPending.TryGetValue(actorNetId, out var options)) return;
 
-        var actor = sPlayers.FirstOrDefault(p => p.NetId == actorNetId);
+        // find the actor from the calling connection
+        var actor = sPlayers.FirstOrDefault(p => p.Conn == connectionToClient);
         if (actor == null || actor.Eliminated) return;
 
-        // keep exactly one of the options
-        if (!options.Contains(keep)) return;
+        if (!chancellorPending.TryGetValue(actor.NetId, out var options))
+        {
+            Debug.LogWarning($"[SRV] CmdChancellorKeep: no pending options for {actor?.NetId}");
+            // fail-safe: don’t leave the game stuck
+            BroadcastState();
+            TryEndOfRound();
+            if (roundActive) EndTurnAdvance();
+            return;
+        }
 
-        // Clear actor's hand; set to kept card
+        if (!options.Contains(keep)) keep = options[0]; // validate
+
+        // apply result
         actor.Hand.Clear();
         actor.Hand.Add(keep);
         TargetReplaceHand(actor.Conn, new List<CardType>(actor.Hand));
 
-        // other two go to bottom (order doesn't matter here)
+        // others to bottom
         foreach (var c in options)
             if (!EqualityComparer<CardType>.Default.Equals(c, keep))
                 deck.Add(c);
 
-        chancellorPending.Remove(actorNetId);
+        chancellorPending.Remove(actor.NetId);
         RpcLog($"{actor.Name} kept {keep} (Chancellor).");
+
         BroadcastState();
+        TryEndOfRound();
+        if (roundActive) EndTurnAdvance();   // <- ADVANCE NOW
     }
 
     // ===== Resolvers =====
@@ -546,25 +661,19 @@ public class GameController : NetworkBehaviour
     // Chancellor — draw 2; keep 1; put the other 2 (from your hand) on bottom
     void ResolveChancellor(SPlayer actor)
     {
-        // collect options = (your remaining hand) + draw up to 2
-        var options = new List<CardType>(actor.Hand); // after playing Chancellor there is typically 1 card left
+        var options = new List<CardType>(actor.Hand);
         for (int i = 0; i < 2 && deck.Count > 0; i++)
         {
             var c = deck[0]; deck.RemoveAt(0);
             options.Add(c);
         }
+        if (options.Count <= 1) { RpcLog($"{actor.Name} played Chancellor (no choices)."); return; }
 
-        // if somehow < 2 options, nothing special to do
-        if (options.Count <= 1)
-        {
-            RpcLog($"{actor.Name} played Chancellor (not enough cards to choose).");
-            return;
-        }
-
-        // ask client which to keep
+        // store options keyed by the actor
         chancellorPending[actor.NetId] = options;
+
         TargetChancellorChoice(actor.Conn, options.ToArray());
-        RpcLog($"{actor.Name} played Chancellor and drew {options.Count - actor.Hand.Count}.");
+        RpcLog($"{actor.Name} played Chancellor and drew {options.Count - 1}.");
     }
 
     // ===== helpers =====
