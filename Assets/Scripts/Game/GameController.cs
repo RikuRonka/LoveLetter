@@ -242,7 +242,7 @@ public class GameController : NetworkBehaviour
         => HandUI.Instance?.ReplaceHand(hand);
 
     // ===== Commands from clients =====
-    [Command(requiresAuthority = false)]
+    [Server]
     public void CmdPlayCard(uint actorNetId, CardType card, uint targetNetId, CardType guardGuess)
     {
 
@@ -334,7 +334,31 @@ public class GameController : NetworkBehaviour
             }
             case CardType.Handmaid: ResolveHandmaid(actor); break;
             case CardType.Prince: ResolvePrince(actor, targetNetId); break;
-            case CardType.King: ResolveKing(actor, targetNetId); break;
+            case CardType.King:
+            {
+                // after you already did:
+                // actor.Hand.Remove(card); actor.Discards.Add(card); PushHandTo(actor);
+
+                var valid = sPlayers
+                    .Where(p => !p.Eliminated && !p.Protected && p != actor)
+                    .ToList();
+
+                if (valid.Count == 0)
+                {
+                    RpcLog($"{actor.Name} played King, but there are no valid targets.");
+                    BroadcastState();
+                    TryEndOfRound();
+                    if (roundActive) EndTurnAdvance();
+                    return;
+                }
+
+                uint[] ids = valid.Select(p => p.NetId).ToArray();
+                string[] names = valid.Select(p => p.Name).ToArray();
+
+                TargetKingPrompt(actor.Conn, ids, names);
+                RpcLog($"{actor.Name} played King. Choose a player to trade hands with.");
+                return; // IMPORTANT: wait for client choice
+            }
             case CardType.Countess: RpcLog($"{actor.Name} played Countess."); break;
             case CardType.Princess: ResolvePrincess(actor); break;
             case CardType.Chancellor:
@@ -348,6 +372,56 @@ public class GameController : NetworkBehaviour
         TryEndOfRound();
         if (roundActive) EndTurnAdvance();
     }
+
+    [TargetRpc]
+    void TargetKingPrompt(NetworkConnection target, uint[] targetIds, string[] targetNames)
+    {
+        TargetPrompt.ShowTargets(targetIds, targetNames, chosenTarget =>
+        {
+            PlayerActions.Local?.ChooseKing(chosenTarget);
+        });
+    }
+        
+    [Server]
+    public void CmdKingTarget(uint targetNetId, NetworkConnectionToClient sender = null)
+    {
+        if (!roundActive) return;
+
+        // who sent this?
+        var actor = sPlayers.FirstOrDefault(p => p.Conn == sender);
+        if (actor == null || actor.Eliminated) { Debug.LogWarning("[SRV] King: actor not found"); return; }
+
+        // validate target (not protected, not self, alive)
+        var target = GetValidTarget(targetNetId, requireNotProtected: true, allowSelf: false);
+        if (target == null)
+        {
+            RpcLog($"{actor.Name} played King, invalid target.");
+            Finish();
+            return;
+        }
+
+        // swap lists
+        var tmp = new List<CardType>(actor.Hand);
+        actor.Hand.Clear(); actor.Hand.AddRange(target.Hand);
+        target.Hand.Clear(); target.Hand.AddRange(tmp);
+
+        // push hands to both clients
+        PushHandTo(actor);
+        PushHandTo(target);
+
+        RpcLog($"{actor.Name} traded hands with {target.Name}.");
+
+        Finish();
+        return;
+
+        void Finish()
+        {
+            BroadcastState();
+            TryEndOfRound();
+            if (roundActive) EndTurnAdvance();
+        }
+    }
+
     [TargetRpc]
     void TargetPriestPrompt(NetworkConnection target, uint[] targetIds, string[] targetNames)
     {
@@ -368,8 +442,8 @@ public class GameController : NetworkBehaviour
         });
     }
 
-    [Command(requiresAuthority = false)]
-    public void CmdBaronTarget(uint targetNetId, NetworkConnectionToClient sender = null)
+    [Server]
+    public void CmdBaronTarget(uint targetNetId, NetworkConnectionToClient sender)
     {
         if (!roundActive) return;
 
@@ -430,8 +504,8 @@ public class GameController : NetworkBehaviour
         ComparePrompt.Show(aName, aCard, bName, bCard, resultText);
     }
 
-    [Command(requiresAuthority = false)]
-    public void CmdPriestTarget(uint actorNetId, uint targetNetId)
+    [Server]
+    public void CmdPriestTarget(uint actorNetId, uint targetNetId, NetworkConnectionToClient sender)
     {
         if (!roundActive) return;
 
@@ -486,8 +560,8 @@ public class GameController : NetworkBehaviour
     }
 
 
-    [Command(requiresAuthority = false)]
-    public void CmdGuardGuess(uint actorNetId, uint targetNetId, CardType guess)
+    [Server]
+    public void CmdGuardGuess(uint actorNetId, uint targetNetId, CardType guess, NetworkConnectionToClient sender)
     {
         if (!roundActive) return;
 
@@ -520,15 +594,13 @@ public class GameController : NetworkBehaviour
         }
     }
 
-
-
-    [Command(requiresAuthority = false)]
-    public void CmdChancellorKeep(CardType keep)
+    [Server]
+    public void CmdChancellorKeep(CardType keep, NetworkConnectionToClient sender)
     {
         if (!roundActive) return;
 
         // find the actor from the calling connection
-        var actor = sPlayers.FirstOrDefault(p => p.Conn == connectionToClient);
+        var actor = sPlayers.FirstOrDefault(p => p.Conn == sender);
         if (actor == null || actor.Eliminated) return;
 
         if (!chancellorPending.TryGetValue(actor.NetId, out var options))
