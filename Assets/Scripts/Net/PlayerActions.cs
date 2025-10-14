@@ -26,4 +26,9 @@ public class PlayerActions : NetworkBehaviour
         GameController.Instance.CmdGuardGuess(MyNetId, targetNetId, guess);
     }
 
+    public void ChoosePriest(uint targetNetId)
+    {
+        GameController.Instance.CmdPriestTarget(netId, targetNetId);
+    }
+
 }

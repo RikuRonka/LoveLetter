@@ -238,6 +238,7 @@ public class GameController : NetworkBehaviour
     [Command(requiresAuthority = false)]
     public void CmdPlayCard(uint actorNetId, CardType card, uint targetNetId, CardType guardGuess)
     {
+
         if (!roundActive) return;
 
         int actorIdx = sPlayers.FindIndex(p => p.NetId == actorNetId);
@@ -254,7 +255,7 @@ public class GameController : NetworkBehaviour
         // play: move from hand into discards (face-up)
         actor.Hand.Remove(card);
         actor.Discards.Add(card);
-
+        PushHandTo(actor);
         if (card == CardType.Spy)
             spyPlayedThisRound.Add(actor.NetId);
 
@@ -279,7 +280,29 @@ public class GameController : NetworkBehaviour
                 RpcLog($"{actor.Name} played Guard. Choose a target and guess.");
                 return; // IMPORTANT: wait for client response
             }
-            case CardType.Priest: ResolvePriest(actor, targetNetId); break;
+            case CardType.Priest:
+            {
+                // after you already did: actor.Hand.Remove(card); actor.Discards.Add(card); PushHandTo(actor);
+                var valid = sPlayers
+                    .Where(p => !p.Eliminated && !p.Protected && p != actor)
+                    .ToList();
+
+                if (valid.Count == 0)
+                {
+                    RpcLog($"{actor.Name} played Priest, but there are no valid targets.");
+                    BroadcastState();
+                    TryEndOfRound();
+                    if (roundActive) EndTurnAdvance();
+                    return;
+                }
+
+                uint[] ids = valid.Select(p => p.NetId).ToArray();
+                string[] names = valid.Select(p => p.Name).ToArray();
+
+                TargetPriestPrompt(actor.Conn, ids, names);
+                RpcLog($"{actor.Name} played Priest. Choose a player to peek.");
+                return; // IMPORTANT: wait for client choice
+            }
             case CardType.Baron: ResolveBaron(actor, targetNetId); break;
             case CardType.Handmaid: ResolveHandmaid(actor); break;
             case CardType.Prince: ResolvePrince(actor, targetNetId); break;
@@ -294,7 +317,44 @@ public class GameController : NetworkBehaviour
         TryEndOfRound();
         if (roundActive) EndTurnAdvance();
     }
+    [TargetRpc]
+    void TargetPriestPrompt(NetworkConnection target, uint[] targetIds, string[] targetNames)
+    {
+        TargetPrompt.ShowTargets(targetIds, targetNames, chosenTarget =>
+        {
+            PlayerActions.Local?.ChoosePriest(chosenTarget);
+        });
+    }
 
+    [Command(requiresAuthority = false)]
+    public void CmdPriestTarget(uint actorNetId, uint targetNetId)
+    {
+        if (!roundActive) return;
+
+        var actor = sPlayers.FirstOrDefault(p => p.NetId == actorNetId);
+        if (actor == null || actor.Eliminated) return;
+
+        var target = GetValidTarget(targetNetId, requireNotProtected: true, allowSelf: false);
+        if (target == null)
+        {
+            RpcLog($"{actor?.Name} played Priest, invalid target.");
+            EndAfter();
+            return;
+        }
+
+        // Send the private peek to the actor only
+        TargetShowPeek(actor.Conn, target.Name, target.Hand.FirstOrDefault());
+        RpcLog($"{actor.Name} looked at {target.Name}'s hand.");
+
+        EndAfter();
+
+        void EndAfter()
+        {
+            BroadcastState();
+            TryEndOfRound();
+            if (roundActive) EndTurnAdvance();
+        }
+    }
     List<PublicPlayer> BuildPublicTargets(SPlayer actor)
     {
         return sPlayers
@@ -314,8 +374,8 @@ public class GameController : NetworkBehaviour
     [TargetRpc]
     void TargetGuardPrompt(NetworkConnection target, uint[] targetIds, string[] targetNames)
     {
-        var guessOptions = CardDB.All.Where(c => c != CardType.Guard).ToList();
-        GuardPrompt.Show(targetIds, targetNames, guessOptions, (chosenTarget, chosenGuess) =>
+        var guessOptions = CardDB.AllExceptGuard;
+        TargetPrompt.ShowTargetsAndGuesses(targetIds, targetNames, guessOptions, (chosenTarget, chosenGuess) =>
         {
             PlayerActions.Local?.ChooseGuard(chosenTarget, chosenGuess);
         });
@@ -434,6 +494,7 @@ public class GameController : NetworkBehaviour
         // move to discards (public)
         target.Hand.Clear();
         target.Discards.Add(discarded);
+        PushHandTo(target);
         if (discarded == CardType.Spy) spyPlayedThisRound.Add(target.NetId);
 
         if (discarded == CardType.Princess)
@@ -452,6 +513,11 @@ public class GameController : NetworkBehaviour
                 TargetGiveCard(target.Conn, c);
             }
         }
+    }
+
+    void PushHandTo(SPlayer p)
+    {
+        TargetReplaceHand(p.Conn, new List<CardType>(p.Hand));
     }
 
     // King — swap hands with another player
@@ -532,6 +598,7 @@ public class GameController : NetworkBehaviour
         }
         p.Hand.Clear();
         p.Eliminated = true;
+        PushHandTo(p);
     }
 
     void TryEndOfRound()

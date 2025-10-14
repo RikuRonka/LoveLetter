@@ -7,20 +7,42 @@ public class ChancellorPrompt : MonoBehaviour
     public static ChancellorPrompt Instance;
 
     [Header("UI")]
-    [SerializeField] GameObject panel;                 // root to show/hide
-    [SerializeField] Transform optionsRoot;            // where buttons are spawned
-    [SerializeField] GameObject optionButtonPrefab;    // a simple Button with Image (can reuse your cardButtonPrefab)
+    [SerializeField] GameObject panel;
+    [SerializeField] Transform optionsRoot;
+    [SerializeField] GameObject optionButtonPrefab;    
+    [SerializeField] Transform cardRoot;
+    [SerializeField] GameObject cardButtonPrefab;
 
     Action<CardType> onPick;
 
     void Awake() => Instance = this;
 
     // called by GameController via TargetChancellorChoice
-    public static void Show(CardType[] options, Action<CardType> onPick)
+    public static void Show(CardType[] options, Action<CardType> onKeep)
     {
-        if (Instance == null) return;
-        Instance.InternalShow(options, onPick);
+        var inst = Instance;
+        if (!inst) return;
+
+        inst.gameObject.SetActive(true);
+
+        // clear old
+        foreach (Transform child in inst.cardRoot)
+            Destroy(child.gameObject);
+
+        foreach (var card in options)
+        {
+            var go = Instantiate(inst.cardButtonPrefab, inst.cardRoot);
+            var ui = go.GetComponent<CardButtonUI>();
+
+            // this is the missing piece: assign sprite from CardDB
+            ui.Setup(CardDB.Sprite(card), () =>
+            {
+                onKeep?.Invoke(card);
+                inst.gameObject.SetActive(false);
+            }, true);
+        }
     }
+
 
     void InternalShow(CardType[] options, Action<CardType> onPick)
     {

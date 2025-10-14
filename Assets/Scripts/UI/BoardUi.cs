@@ -10,8 +10,8 @@ public class BoardUI : MonoBehaviour
     [SerializeField] TMP_Text logText;    // scrolling log or simple label
 
     [Header("Turn Colors")]
-    [SerializeField] Color yourTurnColor = new Color(0.20f, 0.85f, 0.35f); // green
-    [SerializeField] Color oppTurnColor = new Color(0.90f, 0.30f, 0.30f); // red
+    [SerializeField] Color yourTurnColor = new(0.20f, 0.85f, 0.35f); // green
+    [SerializeField] Color oppTurnColor = new(0.90f, 0.30f, 0.30f); // red
 
     void Awake() => Instance = this;
 
