@@ -8,7 +8,7 @@ public class ComparePrompt : MonoBehaviour
     public static ComparePrompt Instance;
 
     [Header("Root")]
-    [SerializeField] GameObject panel;          // overlay to show/hide
+    [SerializeField] GameObject panel;
 
     [Header("Left")]
     [SerializeField] TMP_Text leftName;

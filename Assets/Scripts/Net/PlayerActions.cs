@@ -46,4 +46,11 @@ public class PlayerActions : NetworkBehaviour
     {
         GameController.Instance.CmdKingTarget(targetNetId, connectionToClient);
     }
+
+    [Command]
+    public void ChoosePrince(uint targetNetId)
+    {
+        GameController.Instance.CmdPrinceTarget(targetNetId, connectionToClient);
+    }
+
 }
