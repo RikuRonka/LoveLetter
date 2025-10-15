@@ -1,20 +1,17 @@
-using System.Collections;
 using TMPro;
 using UnityEngine;
-using UnityEngine.UI;
 
 public class BoardUI : MonoBehaviour
 {
     public static BoardUI Instance;
 
     [Header("Texts")]
-    [SerializeField] TMP_Text turnText;   // "Turn: Alice"
-    [SerializeField] TMP_Text logText;    // scrolling log or simple label
-    public ScrollRect logScrollRect;
+    [SerializeField] TMP_Text turnText;
+    [SerializeField] TMP_Text logText;
 
     [Header("Turn Colors")]
-    [SerializeField] Color yourTurnColor = new(0.20f, 0.85f, 0.35f); // green
-    [SerializeField] Color oppTurnColor = new(0.90f, 0.30f, 0.30f); // red
+    [SerializeField] Color yourTurnColor = new(0.20f, 0.85f, 0.35f);
+    [SerializeField] Color oppTurnColor = new(0.90f, 0.30f, 0.30f);
 
     void Awake() => Instance = this;
 
@@ -23,12 +20,10 @@ public class BoardUI : MonoBehaviour
         if (turnText == null || s.Players == null || s.Players.Count == 0)
             return;
 
-        // who’s turn per server
         var cur = (s.CurrentIndex >= 0 && s.CurrentIndex < s.Players.Count)
                   ? s.Players[s.CurrentIndex]
                   : null;
 
-        // local player netId (0 if unknown yet)
         uint localId = PlayerNetwork.Local ? PlayerNetwork.Local.netId : 0;
 
         bool isLocalTurn = (cur != null && cur.NetId == localId);
@@ -45,25 +40,7 @@ public class BoardUI : MonoBehaviour
             turnText.color = oppTurnColor;
         }
 
-        // forward deck/burned to DeckUI (if you use it)
         DeckUI.I?.Render(s.DeckCount, s.BurnedCount);
-    }
-
-
-    private IEnumerator RefreshScroll()
-    {
-        // Let TMP rebuild its geometry first
-        yield return null;
-        Canvas.ForceUpdateCanvases();
-
-        // Ensure Content height matches text height
-        var content = logScrollRect.content;
-        content.sizeDelta = new Vector2(content.sizeDelta.x, logText.preferredHeight);
-
-        // Auto-scroll only if there is overflow
-        float ch = content.rect.height;
-        float vh = logScrollRect.viewport.rect.height;
-        logScrollRect.verticalNormalizedPosition = (ch <= vh) ? 1f : 0f;
     }
 
     public void Log(string msg)
@@ -75,6 +52,5 @@ public class BoardUI : MonoBehaviour
         else
             logText.text += "\n" + msg;
 
-        StartCoroutine(RefreshScroll());
     }
 }

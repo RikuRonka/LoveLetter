@@ -9,26 +9,25 @@ public class TargetPrompt : MonoBehaviour
     public static TargetPrompt Instance;
 
     [Header("Root")]
-    [SerializeField] GameObject panel;                 // toggle this on/off
+    [SerializeField] GameObject panel;
 
     [Header("Targets (players)")]
-    [SerializeField] Transform targetListRoot;         // Vertical/Horizontal/Grid Layout
-    [SerializeField] GameObject targetButtonPrefab;    // Button (TMP_Text child)
-    [SerializeField] TMP_Text selectTargetText;        // optional "Select a player"
+    [SerializeField] Transform targetListRoot;
+    [SerializeField] GameObject targetButtonPrefab;
+    [SerializeField] TMP_Text selectTargetText;
 
     [Header("Guesses (cards)")]
-    [SerializeField] Transform guessListRoot;          // Layout root for guesses
-    [SerializeField] GameObject guessButtonPrefab;     // Button (TMP_Text child)
+    [SerializeField] Transform guessListRoot;
+    [SerializeField] GameObject guessButtonPrefab;
 
     [Header("Footer")]
-    [SerializeField] TMP_Text footerText;              // optional hint/status
+    [SerializeField] TMP_Text footerText;
 
-    // state
     IReadOnlyList<uint> _ids;
     IReadOnlyList<string> _names;
     IReadOnlyList<CardType> _guesses;
-    Action<uint> _onTarget;                    // targets-only callback
-    Action<uint, CardType> _onTargetAndGuess;  // targets+guesses callback
+    Action<uint> _onTarget;
+    Action<uint, CardType> _onTargetAndGuess;
 
     uint _selectedTarget;
     CardType _selectedGuess;
@@ -39,7 +38,7 @@ public class TargetPrompt : MonoBehaviour
 
     static TargetPrompt Ensure()
     {
-        if (Instance == null) Instance = FindObjectOfType<TargetPrompt>(true);
+        if (Instance == null) Instance = FindFirstObjectByType<TargetPrompt>();
         if (Instance == null) Debug.LogError("[TargetPrompt] No instance found in scene.");
         return Instance;
     }

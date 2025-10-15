@@ -32,7 +32,7 @@ public class ComparePrompt : MonoBehaviour
 
     public static void Show(string aName, CardType aCard, string bName, CardType bCard, string result)
     {
-        var i = Instance ?? FindObjectOfType<ComparePrompt>(true);
+        var i = Instance ?? FindFirstObjectByType<ComparePrompt>();
         if (i == null) { Debug.LogWarning("[ComparePrompt] No instance in scene"); return; }
         i.InternalShow(aName, aCard, bName, bCard, result);
     }

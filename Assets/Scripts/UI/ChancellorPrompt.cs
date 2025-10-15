@@ -7,11 +7,11 @@ public class ChancellorPrompt : MonoBehaviour
     public static ChancellorPrompt Instance;
 
     [Header("UI")]
-    [SerializeField] GameObject panel;                 // root to toggle on/off
-    [SerializeField] Transform optionsRoot;            // where the 3 options go (Layout Group)
-    [SerializeField] GameObject optionButtonPrefab;    // usually your CardButton prefab
-    [SerializeField] Transform cardRoot;               // optional: show kept card here
-    [SerializeField] GameObject cardButtonPrefab;      // usually your CardButton prefab
+    [SerializeField] GameObject panel;
+    [SerializeField] Transform optionsRoot;
+    [SerializeField] GameObject optionButtonPrefab;
+    [SerializeField] Transform cardRoot;
+    [SerializeField] GameObject cardButtonPrefab;
 
     Action<CardType> _onKeep;
 
@@ -30,7 +30,7 @@ public class ChancellorPrompt : MonoBehaviour
     /// </summary>
     public static void Show(CardType[] options, Action<CardType> onKeep)
     {
-        var i = Instance ?? FindObjectOfType<ChancellorPrompt>(true);
+        var i = Instance ?? FindFirstObjectByType<ChancellorPrompt>();
         if (i == null) { Debug.LogError("[ChancellorPrompt] No instance in scene."); return; }
         i._onKeep = onKeep;
         i.Build(options);
@@ -55,7 +55,6 @@ public class ChancellorPrompt : MonoBehaviour
             var prefab = optionButtonPrefab ? optionButtonPrefab : cardButtonPrefab;
             var go = Instantiate(prefab, optionsRoot);
 
-            // Prefer CardButtonUI if present (your hover/highlight logic)
             var ui = go.GetComponent<CardButtonUI>();
             if (ui != null)
             {
@@ -63,7 +62,6 @@ public class ChancellorPrompt : MonoBehaviour
             }
             else
             {
-                // Fallback if prefab doesn’t have CardButtonUI
                 var img = go.GetComponentInChildren<Image>(true);
                 if (img) img.sprite = CardDB.Sprite(card);
 
@@ -75,10 +73,8 @@ public class ChancellorPrompt : MonoBehaviour
 
     void Choose(CardType keep)
     {
-        // notify game logic first
         _onKeep?.Invoke(keep);
 
-        // (Optional) show the kept card in CardRoot briefly
         if (cardRoot && cardButtonPrefab)
         {
             Clear(cardRoot);
@@ -86,7 +82,7 @@ public class ChancellorPrompt : MonoBehaviour
             var ui = go.GetComponent<CardButtonUI>();
             if (ui != null)
             {
-                ui.Setup(CardDB.Sprite(keep), null, false);  // not playable
+                ui.Setup(CardDB.Sprite(keep), null, false);
             }
             else
             {
@@ -97,7 +93,6 @@ public class ChancellorPrompt : MonoBehaviour
             }
         }
 
-        // close immediately (you can delay if you want the kept card to linger)
         Close();
     }
 

@@ -8,7 +8,6 @@ public class HoverScale : MonoBehaviour, IPointerEnterHandler, IPointerExitHandl
 
     Vector3 baseScale;
     Vector3 targetScale;
-    bool hovering;
 
     void Awake()
     {
@@ -19,7 +18,6 @@ public class HoverScale : MonoBehaviour, IPointerEnterHandler, IPointerExitHandl
     void OnEnable()
     {
         transform.localScale = baseScale;
-        hovering = false;
         targetScale = baseScale;
     }
 
@@ -28,6 +26,6 @@ public class HoverScale : MonoBehaviour, IPointerEnterHandler, IPointerExitHandl
         transform.localScale = Vector3.Lerp(transform.localScale, targetScale, Time.unscaledDeltaTime * speed);
     }
 
-    public void OnPointerEnter(PointerEventData _) { hovering = true; targetScale = baseScale * hoverScale; }
-    public void OnPointerExit(PointerEventData _) { hovering = false; targetScale = baseScale; }
+    public void OnPointerEnter(PointerEventData _) { targetScale = baseScale * hoverScale; }
+    public void OnPointerExit(PointerEventData _) {  targetScale = baseScale; }
 }
