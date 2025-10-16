@@ -284,7 +284,7 @@ public class GameController : NetworkBehaviour
                 var valid = sPlayers.Where(p => !p.Eliminated && !p.Protected && p != actor).ToList();
                 if (valid.Count == 0)
                 {
-                    RpcLog($"{NameOf(actor)} played Guard, but {ExplainNoTargets(actor, allowSelf: false)}");
+                    RpcLog($"{NameOf(actor)} played {CardLabel(CardType.Guard)}, but {ExplainNoTargets(actor, allowSelf: false)}");
                     BroadcastState();
                     TryEndOfRound();
                     if (roundActive) EndTurnAdvance();
@@ -295,7 +295,7 @@ public class GameController : NetworkBehaviour
                 string[] names = valid.Select(p => LiveName(p)).ToArray();
 
                 TargetGuardPrompt(actor.Conn, ids, names);   // <— ONE TargetRpc
-                RpcLog($"{actor.Name} played Guard. Choose a target and guess.");
+                RpcLog($"{actor.Name} played {CardLabel(CardType.Guard)}. Choose a target and guess.");
                 return; // IMPORTANT: wait for client response
             }
             case CardType.Priest:
@@ -307,7 +307,7 @@ public class GameController : NetworkBehaviour
 
                 if (valid.Count == 0)
                 {
-                    RpcLog($"{NameOf(actor)} played Priest, but {ExplainNoTargets(actor, allowSelf: false)}");
+                    RpcLog($"{NameOf(actor)} played {CardLabel(CardType.Priest)}, but {ExplainNoTargets(actor, allowSelf: false)}");
                     BroadcastState();
                     TryEndOfRound();
                     if (roundActive) EndTurnAdvance();
@@ -318,7 +318,7 @@ public class GameController : NetworkBehaviour
                 string[] names = valid.Select(p => LiveName(p)).ToArray();
 
                 TargetPriestPrompt(actor.Conn, ids, names);
-                RpcLog($"{actor.Name} played Priest. Choose a player to peek.");
+                RpcLog($"{actor.Name} played {CardLabel(CardType.Priest)}. Choose a player to peek.");
                 return; // IMPORTANT: wait for client choice
             }
             case CardType.Baron:
@@ -329,7 +329,7 @@ public class GameController : NetworkBehaviour
 
                 if (valid.Count == 0)
                 {
-                    RpcLog($"{NameOf(actor)} played Baron, but {ExplainNoTargets(actor, allowSelf: false)}");
+                    RpcLog($"{NameOf(actor)} played {CardLabel(CardType.Baron)}, but {ExplainNoTargets(actor, allowSelf: false)}");
                     BroadcastState();
                     TryEndOfRound();
                     if (roundActive) EndTurnAdvance();
@@ -340,7 +340,7 @@ public class GameController : NetworkBehaviour
                 string[] names = valid.Select(p => LiveName(p)).ToArray();
 
                 TargetBaronPrompt(actor.Conn, ids, names);
-                RpcLog($"{actor.Name} played Baron. Choose a player to compare hands with.");
+                RpcLog($"{actor.Name} played {CardLabel(CardType.Baron)}. Choose a player to compare hands with.");
                 return; // IMPORTANT: wait for client response
             }
             case CardType.Handmaid: ResolveHandmaid(actor); break;
@@ -353,7 +353,7 @@ public class GameController : NetworkBehaviour
 
                 if (valid.Count == 0)
                 {
-                    RpcLog($"{NameOf(actor)} played Prince, but {ExplainNoTargets(actor, allowSelf: true)}");
+                    RpcLog($"{NameOf(actor)} played {CardLabel(CardType.Prince)}, but {ExplainNoTargets(actor, allowSelf: true)}");
                     BroadcastState();
                     TryEndOfRound();
                     if (roundActive) EndTurnAdvance();
@@ -364,7 +364,7 @@ public class GameController : NetworkBehaviour
                 string[] names = valid.Select(p => LiveName(p)).ToArray();
 
                 TargetPrincePrompt(actor.Conn, ids, names);
-                RpcLog($"{actor.Name} played Prince. Choose a player to discard and draw.");
+                RpcLog($"{actor.Name} played {CardLabel(CardType.Prince)}. Choose a player to discard and draw.");
                 return; // IMPORTANT: wait for client response
             }
             case CardType.King:
@@ -378,7 +378,7 @@ public class GameController : NetworkBehaviour
 
                 if (valid.Count == 0)
                 {
-                    RpcLog($"{NameOf(actor)} played King, but {ExplainNoTargets(actor, allowSelf: false)}");
+                    RpcLog($"{NameOf(actor)} played {CardLabel(CardType.King)}, but {ExplainNoTargets(actor, allowSelf: false)}");
                     BroadcastState();
                     TryEndOfRound();
                     if (roundActive) EndTurnAdvance();
@@ -389,10 +389,10 @@ public class GameController : NetworkBehaviour
                 string[] names = valid.Select(p => LiveName(p)).ToArray();
 
                 TargetKingPrompt(actor.Conn, ids, names);
-                RpcLog($"{actor.Name} played King. Choose a player to trade hands with.");
+                RpcLog($"{actor.Name} played {CardLabel(CardType.King)}. Choose a player to trade hands with.");
                 return; // IMPORTANT: wait for client choice
             }
-            case CardType.Countess: RpcLog($"{actor.Name} played Countess."); break;
+            case CardType.Countess: RpcLog($"{actor.Name} played {CardLabel(CardType.Countess)}."); break;
             case CardType.Princess: ResolvePrincess(actor); break;
             case CardType.Chancellor:
             ResolveChancellor(actor);
@@ -417,6 +417,30 @@ public class GameController : NetworkBehaviour
         if (requireNotProtected && target != actor && target.Protected) return $"{NameOf(target)} is protected by Handmaid.";
         return null;
     }
+
+    // Pick a palette (high contrast on your grey background)
+    static readonly string[] PlayerPalette =
+    {
+    "#4CC9F0", // cyan
+    "#F72585", // pink
+    "#E9C46A", // sand
+    "#2A9D8F", // teal
+    "#F77F00", // orange
+    "#9B5DE5", // purple
+    "#43AA8B", // green
+    "#577590", // blue-grey
+};
+
+    // Stable color per player id
+    static string PlayerColor(uint netId)
+    {
+        int i = (int)(netId % (uint)PlayerPalette.Length);
+        return PlayerPalette[i];
+    }
+
+    // Colorized name & card labels
+    string P(SPlayer p) => $"<b><color={PlayerColor(p.NetId)}>{NameOf(p)}</color></b>";
+    static string CardLabel(CardType c) => $"<i><color=#FFD166>{CardDB.Title[c]}</color></i>"; // warm yellow
     [Server]
     public void CmdPrinceTarget(uint targetNetId, NetworkConnectionToClient sender)
     {
@@ -431,7 +455,7 @@ public class GameController : NetworkBehaviour
         var reason = TargetInvalidReason(actor, targetNetId, allowSelf: true, requireNotProtected: false, out var target);
         if (target == null || target.Eliminated)
         {
-            RpcLog($"{NameOf(actor)} played Prince, but {reason}");
+            RpcLog($"{NameOf(actor)} played {CardLabel(CardType.Prince)}, but {reason}");
             Finish();
             return;
         }
@@ -439,7 +463,7 @@ public class GameController : NetworkBehaviour
         // Handmaid protection blocks being targeted by others; self-target always allowed
         if (target != actor && target.Protected)
         {
-            RpcLog($"{NameOf(actor)} played Guard on {NameOf(target)}, but they are protected by Handmaid.");
+            RpcLog($"{NameOf(actor)} played {CardLabel(CardType.Guard)} on {NameOf(target)}, but they are protected by Handmaid.");
             Finish();
             return;
         }
@@ -488,7 +512,7 @@ public class GameController : NetworkBehaviour
         var target = GetValidTarget(targetNetId, requireNotProtected: true, allowSelf: false);
         if (target == null)
         {
-            RpcLog($"{actor.Name} played King, invalid target.");
+            RpcLog($"{actor.Name} played {CardLabel(CardType.King)}, invalid target.");
             Finish();
             return;
         }
@@ -575,7 +599,7 @@ public class GameController : NetworkBehaviour
 
         if (reason != null || target == null)
         {
-            RpcLog($"{actor.Name} played Baron, but {reason}");
+            RpcLog($"{actor.Name} played {CardLabel(CardType.Baron)}, but {reason}");
             Finish();
             return;
         }
@@ -643,7 +667,7 @@ public class GameController : NetworkBehaviour
 
         if (target == null)
         {
-            RpcLog($"{actor?.Name} played Priest, but {reason}");
+            RpcLog($"{actor?.Name} played {CardLabel(CardType.Priest)}, but {reason}");
             EndAfter();
             return;
         }
@@ -770,7 +794,7 @@ public class GameController : NetworkBehaviour
        // var target = GetValidTarget(targetNetId, requireNotProtected: true, allowSelf: false);
         var reason = TargetInvalidReason(actor, targetNetId, allowSelf: true, requireNotProtected: false, out var target);
 
-        if (target == null) { RpcLog($"{actor.Name} played Priest, but {reason}."); return; }
+        if (target == null) { RpcLog($"{actor.Name} played {CardLabel(CardType.Priest)}, but {reason}."); return; }
 
         TargetShowPeek(actor.Conn, target.Name, target.Hand.FirstOrDefault());
         RpcLog($"{actor.Name} looked at {target.Name}'s hand.");
@@ -782,7 +806,7 @@ public class GameController : NetworkBehaviour
         //var target = GetValidTarget(targetNetId, requireNotProtected: true, allowSelf: false);
         var reason = TargetInvalidReason(actor, targetNetId, allowSelf: true, requireNotProtected: false, out var target);
 
-        if (target == null) { RpcLog($"{actor.Name} played Baron, but {reason}."); return; }
+        if (target == null) { RpcLog($"{actor.Name} played {CardLabel(CardType.Baron)}, but {reason}."); return; }
 
         var a = actor.Hand.FirstOrDefault();
         var b = target.Hand.FirstOrDefault();
@@ -809,7 +833,7 @@ public class GameController : NetworkBehaviour
       //  var target = GetValidTarget(targetNetId, requireNotProtected: true, allowSelf: true);
         var reason = TargetInvalidReason(actor, targetNetId, allowSelf: true, requireNotProtected: false, out var target);
 
-        if (target == null) { RpcLog($"{actor.Name} played Prince, but {reason}"); return; }
+        if (target == null) { RpcLog($"{actor.Name} played {CardLabel(CardType.Prince)}, but {reason}"); return; }
 
         var discarded = target.Hand.FirstOrDefault();
         // move to discards (public)
@@ -845,7 +869,7 @@ public class GameController : NetworkBehaviour
     void ResolveKing(SPlayer actor, uint targetNetId)
     {
         var target = GetValidTarget(targetNetId, requireNotProtected: true, allowSelf: false);
-        if (target == null) { RpcLog($"{actor.Name} played King, invalid target."); return; }
+        if (target == null) { RpcLog($"{actor.Name} played {CardLabel(CardType.King)}, invalid target."); return; }
 
         var temp = new List<CardType>(actor.Hand);
         actor.Hand.Clear(); actor.Hand.AddRange(target.Hand);
@@ -873,13 +897,13 @@ public class GameController : NetworkBehaviour
             var c = deck[0]; deck.RemoveAt(0);
             options.Add(c);
         }
-        if (options.Count <= 1) { RpcLog($"{actor.Name} played Chancellor (no choices)."); return; }
+        if (options.Count <= 1) { RpcLog($"{actor.Name} played {CardLabel(CardType.Chancellor)} (no choices)."); return; }
 
         // store options keyed by the actor
         chancellorPending[actor.NetId] = options;
 
         TargetChancellorChoice(actor.Conn, options.ToArray());
-        RpcLog($"{actor.Name} played Chancellor and drew {options.Count - 1}.");
+        RpcLog($"{actor.Name} played {CardLabel(CardType.Chancellor)} and drew {options.Count - 1}.");
     }
 
     // ===== helpers =====

@@ -28,6 +28,8 @@ public class PlayerNetwork : NetworkBehaviour
     {
         s = string.IsNullOrWhiteSpace(s) ? "Player" : s.Trim();
         if (s.Length > 20) s = s[..20];
+        // strip TMP/HTML-ish chars
+        s = s.Replace("<", "‹").Replace(">", "›").Replace("&", "and");
         return s;
     }
 
