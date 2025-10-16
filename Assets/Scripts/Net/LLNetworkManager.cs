@@ -14,6 +14,17 @@ public class LLNetworkManager : NetworkManager
         base.OnStartServer();
         maxConnections = 4;
     }
+    public override void OnServerDisconnect(NetworkConnectionToClient conn)
+    {
+        var ni = conn.identity;
+        if (ni)
+        {
+            var pn = ni.GetComponent<PlayerNetwork>();
+            // Use netId so we release correctly even if PlayerName changed
+            GameController.Instance?.ReleaseNameFor(ni.netId);
+        }
+        base.OnServerDisconnect(conn);
+    }
     public override void OnStopHost()
     {
         base.OnStopHost();
@@ -25,10 +36,6 @@ public class LLNetworkManager : NetworkManager
     {
         base.OnClientDisconnect();
         LastDisconnectReason = "Lost connection to host.";
-       // if (SceneManager.GetActiveScene().name != "MainMenu")
-       //     SceneManager.LoadScene("MainMenu");
-        // If Offline Scene is set, Mirror will load it automatically next frame.
-        // Don't try to show UI here—the menu scene isn't loaded yet.
     }
 
     public override void OnStopClient()

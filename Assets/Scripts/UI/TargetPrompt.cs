@@ -1,8 +1,9 @@
+using Mirror;
 using System;
 using System.Collections.Generic;
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
-using TMPro;
 
 public class TargetPrompt : MonoBehaviour
 {
@@ -43,9 +44,18 @@ public class TargetPrompt : MonoBehaviour
         return Instance;
     }
 
-    // ===== Public API =====
-
-    // Targets only (Priest / Baron / King / Prince)
+    static string LiveNameFor(uint netId)
+    {
+        if (NetworkClient.spawned != null &&
+            NetworkClient.spawned.TryGetValue(netId, out var ni) &&
+            ni != null)
+        {
+            var pn = ni.GetComponent<PlayerNetwork>();
+            if (pn != null && !string.IsNullOrWhiteSpace(pn.PlayerName))
+                return pn.PlayerName;
+        }
+        return null;
+    }
     public static void ShowTargets(IReadOnlyList<uint> ids, IReadOnlyList<string> names, Action<uint> onTarget)
     {
         var i = Ensure(); if (i == null) return;
@@ -58,12 +68,11 @@ public class TargetPrompt : MonoBehaviour
         i.InternalShow(ids, names, guesses, null, onBoth);
     }
 
-    void InternalShow(
-    IReadOnlyList<uint> ids,
-    IReadOnlyList<string> names,
-    IReadOnlyList<CardType> guesses,
-    Action<uint> onTarget,
-    Action<uint, CardType> onBoth)
+    void InternalShow(IReadOnlyList<uint> ids,
+                  IReadOnlyList<string> names,
+                  IReadOnlyList<CardType> guesses,
+                  Action<uint> onTarget,
+                  Action<uint, CardType> onBoth)
     {
         _ids = ids ?? Array.Empty<uint>();
         _names = names ?? Array.Empty<string>();
@@ -72,14 +81,14 @@ public class TargetPrompt : MonoBehaviour
         _onTargetAndGuess = onBoth;
 
         _selectedTarget = 0;
-        _selectedGuess = 0;
+        _selectedGuess = CardType.None;
 
         bool hasGuesses = _guesses != null && _guesses.Count > 0;
         bool targetsOnly = !hasGuesses;
         int targetCount = _ids.Count;
 
-        // ===== 2P QUALITY-OF-LIFE =====
-        // A) Targets-only (Baron/Priest/King/Prince) with exactly one target -> auto-confirm, no UI
+        // 2-player QoL:
+        // A) targets-only & exactly one target -> auto-confirm
         if (targetsOnly && targetCount == 1)
         {
             _onTarget?.Invoke(_ids[0]);
@@ -87,7 +96,7 @@ public class TargetPrompt : MonoBehaviour
             return;
         }
 
-        // B) Guard with exactly one target -> preselect target, hide target list, show only guesses
+        // B) Guard with exactly one target -> preselect & hide the target list
         bool hideTargetList = false;
         if (hasGuesses && targetCount == 1)
         {
@@ -95,17 +104,15 @@ public class TargetPrompt : MonoBehaviour
             hideTargetList = true;
         }
 
-        // ===== Build UI =====
         RebuildTargets();
         RebuildGuesses();
 
         if (selectTargetText)
         {
             selectTargetText.gameObject.SetActive(true);
-            if (hideTargetList)
-                selectTargetText.text = $"Target: {_names[0]}";
-            else
-                selectTargetText.text = targetsOnly ? "Choose a player" : "Select target";
+            selectTargetText.text = hideTargetList
+                ? $"Target: {_names[0]}"
+                : (targetsOnly ? "Choose a player" : "Select target");
         }
 
         if (footerText)
@@ -164,7 +171,7 @@ public class TargetPrompt : MonoBehaviour
 
         foreach (var ct in _guesses)
         {
-            if (ct == CardType.Guard || ct == 0) continue;
+            if (ct == CardType.Guard || ct == CardType.None) continue;
             var go = Instantiate(guessButtonPrefab, guessListRoot);
             var btn = go.GetComponent<Button>();
             var txt = go.GetComponentInChildren<TMP_Text>();

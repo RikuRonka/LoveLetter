@@ -25,48 +25,50 @@ public class RoundSummaryUI : MonoBehaviour
     /// <summary>
     /// Render the server-provided summary.
     /// </summary>
-    public void Show(SummaryRow[] rows, uint winnerNetId, int pointsToWin, bool isMatchOver)
+    public void Show(GameController.SummaryRow[] rows, uint winnerNetId, int pointsToWin, bool isMatchOver)
     {
-        if (!panel || rows == null) return;
+        if (!panel) return;
 
+        // clear old rows
         for (int i = rowsRoot.childCount - 1; i >= 0; i--)
             Destroy(rowsRoot.GetChild(i).gameObject);
 
+        // title
+        var winner = rows.FirstOrDefault(r => r.NetId == winnerNetId);
+        string winnerName = string.IsNullOrWhiteSpace(winner.Name) ? "?" : winner.Name;
+        if (titleText)
+            titleText.text = isMatchOver ? $"{winnerName} wins the match!" : $"{winnerName} wins the round!";
 
-        var winRow = rows.FirstOrDefault(r => r.NetId == winnerNetId);
-        var winnerName = string.IsNullOrWhiteSpace(winRow.Name) ? "?" : winRow.Name;
-        titleText.text = isMatchOver ? $"{winnerName} wins the match!" : $"{winnerName} wins the round!";
-
-        foreach (var r in rows.OrderByDescending(x => x.Score).ThenBy(x => x.Name))
+        // rows: "name — score / pointsToWin"
+        foreach (var r in rows.OrderByDescending(r => r.Score).ThenBy(r => r.Name))
         {
             var go = Instantiate(rowPrefab, rowsRoot);
-            var texts = go.GetComponentsInChildren<TMP_Text>(true);
-            var nameText = texts.Length > 0 ? texts[0] : null;
-            var scoreText = texts.Length > 1 ? texts[1] : null;
-
-            if (nameText) nameText.text = r.Name;
-            if (scoreText) scoreText.text = $"{r.Score} / {pointsToWin}";
-
-            if (r.NetId == winnerNetId && nameText) nameText.fontStyle = FontStyles.Bold;
+            var txt = go.GetComponentInChildren<TMP_Text>();
+            if (txt) txt.text = $"{r.Name} — {r.Score} / {pointsToWin}";
         }
 
+        // buttons (host-only)
         bool isHost = PlayerNetwork.Local && PlayerNetwork.Local.IsHost;
-        nextRoundButton.gameObject.SetActive(!isMatchOver && isHost);
-        playAgainButton.gameObject.SetActive(isMatchOver && isHost);
-
-        nextRoundButton.onClick.RemoveAllListeners();
-        nextRoundButton.onClick.AddListener(() =>
+        if (nextRoundButton)
         {
-            nextRoundButton.interactable = false;
-            PlayerActions.Local?.CmdNextRound();
-        });
+            nextRoundButton.gameObject.SetActive(!isMatchOver && isHost);
+            nextRoundButton.onClick.RemoveAllListeners();
+            nextRoundButton.onClick.AddListener(() =>
+            {
+                nextRoundButton.interactable = false;
+                GameController.Instance?.ServerStartNextRound();
+            });
+        }
 
-        playAgainButton.onClick.RemoveAllListeners();
-        playAgainButton.onClick.AddListener(() =>
+        if (playAgainButton)
         {
-            // TODO: add a server Command like CmdHostResetMatch() if you want a full reset
-            // For example: PlayerActions.Local?.CmdHostResetMatch();
-        });
+            playAgainButton.gameObject.SetActive(isMatchOver && isHost);
+            playAgainButton.onClick.RemoveAllListeners();
+            playAgainButton.onClick.AddListener(() =>
+            {
+                // optional: implement full reset if you want
+            });
+        }
 
         panel.SetActive(true);
     }
@@ -76,3 +78,4 @@ public class RoundSummaryUI : MonoBehaviour
         if (panel) panel.SetActive(false);
     }
 }
+

@@ -1,6 +1,8 @@
-using kcp2k;
+ï»¿using kcp2k;
 using Mirror;
+using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
@@ -27,10 +29,12 @@ public class LobbyUI : MonoBehaviour
     [SerializeField] Button hostButton;
     [SerializeField] Button joinButton;
     [SerializeField] Button stopHostingButton;
-    [SerializeField] TMP_Text hostLeftStatus;
+    [SerializeField] TMP_Text errorText;
+    [SerializeField] TMP_Text playersList;
+    [SerializeField] Button leaveLobbyButton;
 
     public static LobbyUI Instance { get; private set; }
-    public static string LocalPlayerName { get; private set; } = "Player";
+    public string LocalPlayerName { get; private set; } = "Player";
     Coroutine refreshCo;
 
     void Update()
@@ -45,8 +49,16 @@ public class LobbyUI : MonoBehaviour
     {
         ipInput.text = "localhost";
         Instance = this;
+
         var saved = PlayerPrefs.GetString("playerName", "");
         if (!string.IsNullOrWhiteSpace(saved)) nameInput.text = saved;
+
+        if (leaveLobbyButton)
+        {
+            leaveLobbyButton.onClick.RemoveAllListeners();
+            leaveLobbyButton.onClick.AddListener(LeaveLobby);
+        }
+
         ShowPreHost();
     }
 
@@ -64,6 +76,27 @@ public class LobbyUI : MonoBehaviour
         StopRefresh();
     }
 
+    // Called by PlayerNetwork when server accepts the name
+    public void OnNameConfirmed(string finalName)
+    {
+        if (nameInput) nameInput.text = finalName;
+        if (errorText) errorText.gameObject.SetActive(false);
+        RefreshNow();
+    }
+
+    public void ShowNameError(string msg)
+    {
+        if (!errorText) return;
+        errorText.text = msg;
+        errorText.gameObject.SetActive(true);
+    }
+
+    public void ClearNameError()
+    {
+        if (!errorText) return;
+        errorText.gameObject.SetActive(false);
+        errorText.text = "";
+    }
     void OnSceneLoaded(Scene s, LoadSceneMode m)
     {
         StopRefresh();
@@ -71,12 +104,9 @@ public class LobbyUI : MonoBehaviour
 
     public static string LocalPlayerNameOr(string fallback)
     {
-        if(PlayerPrefs.GetString("playerName", "") != null)
-        {
-            return PlayerPrefs.GetString("playerName", "");
-        }
-
-        return fallback;
+        var n = Instance ? Instance.nameInput?.text : null;
+        if (string.IsNullOrWhiteSpace(n)) n = PlayerPrefs.GetString("playerName", fallback);
+        return string.IsNullOrWhiteSpace(n) ? fallback : n;
     }
 
     void StopRefresh()
@@ -91,14 +121,6 @@ public class LobbyUI : MonoBehaviour
     public void QuitGame()
     {
         Application.Quit();
-    }
-
-    static bool IsHostInstance() => NetworkServer.active && NetworkClient.active;
-    void UpdateHostOnlyControls()
-    {
-        bool isHost = IsHostInstance();
-        if (startGameButton) startGameButton.gameObject.SetActive(isHost);
-        if (stopHostingButton) stopHostingButton.gameObject.SetActive(isHost);
     }
 
     public void HostGame()
@@ -118,7 +140,6 @@ public class LobbyUI : MonoBehaviour
 
         var ip = string.IsNullOrWhiteSpace(ipInput.text) ? "localhost" : ipInput.text.Trim();
         NetworkManager.singleton.networkAddress = ip;
-        Debug.Log($"[UI] Join {ip}");
         NetworkManager.singleton.StartClient();
         ShowClientLobby();
     }
@@ -148,17 +169,17 @@ public class LobbyUI : MonoBehaviour
 
         if (preHostPanel) preHostPanel.SetActive(false);
         hostPanel.SetActive(true);
-        ipText.text = "Connected. Waiting for host…";
-        statusText.text = "Joining…";
+
+        ipText.text = "Connected. Waiting for hostâ€¦";
+        statusText.text = "Joiningâ€¦";
 
         if (startGameButton) startGameButton.gameObject.SetActive(false);
         if (stopHostingButton) stopHostingButton.gameObject.SetActive(false);
+        if (leaveLobbyButton) leaveLobbyButton.gameObject.SetActive(true);
 
         StopRefresh();
         refreshCo = StartCoroutine(RefreshLoop());
     }
-
-
 
     void ShowHostLobby()
     {
@@ -168,7 +189,9 @@ public class LobbyUI : MonoBehaviour
         hostPanel.SetActive(true);
 
         ipText.text = $"Your IP: {GetLocalIPv4()}";
-        statusText.text = "Hosting… waiting for players";
+        statusText.text = "Hostingâ€¦ waiting for players";
+
+        if (leaveLobbyButton) leaveLobbyButton.gameObject.SetActive(false);
 
         UpdateHostControlsVisibility();
         RefreshNow();
@@ -180,28 +203,30 @@ public class LobbyUI : MonoBehaviour
     void UpdateHostControlsVisibility()
     {
         bool isHost = NetworkServer.active;
+        bool isClientOnly = NetworkClient.active && !NetworkServer.active;
+
         if (startGameButton) startGameButton.gameObject.SetActive(isHost);
         if (stopHostingButton) stopHostingButton.gameObject.SetActive(isHost);
+        if (leaveLobbyButton) leaveLobbyButton.gameObject.SetActive(isClientOnly);
     }
 
-    void StartRefreshLoop()
+    public void LeaveLobby()
     {
-        if (refreshCo != null) StopCoroutine(refreshCo);
-        refreshCo = StartCoroutine(RefreshLoop());
-    }
+        // Client only (non-host)
+        if (NetworkClient.active && !NetworkServer.active)
+        {
+            // Optional: set a reason so the pre-host screen can show a message
+            LLNetworkManager.LastDisconnectReason = "You left the lobby.";
+            NetworkManager.singleton.StopClient();
+        }
 
-    string GetListenPort()
-    {
-        var t = NetworkManager.singleton.transport;
-        if (t is KcpTransport kcp) return kcp.Port.ToString();
-        if (t is TelepathyTransport tel) return tel.port.ToString();
-        return "?";
+        ShowPreHost();
     }
 
     public void ShowDisconnected(string reason)
     {
         Debug.Log($"[UI] Disconnected: {reason}");
-        if (hostLeftStatus) hostLeftStatus.text = reason;
+        if (errorText) errorText.text = reason;
         ShowPreHost();
     }
 
@@ -225,11 +250,34 @@ public class LobbyUI : MonoBehaviour
         }
     }
 
+    IEnumerable<PlayerNetwork> SortedPlayers()
+    {
+        // Works on both client and host
+        var all = Mirror.NetworkClient.spawned.Values
+            .Select(n => n ? n.GetComponent<PlayerNetwork>() : null)
+            .Where(p => p != null);
+
+        return all
+            .OrderByDescending(p => p.IsHost)                                   // host at top
+            .ThenBy(p => string.IsNullOrWhiteSpace(p.PlayerName) ? "~" : p.PlayerName,
+                    StringComparer.OrdinalIgnoreCase);                          // Aâ†’Z (case-insensitive)
+    }
+
+    static string RowText(PlayerNetwork pn)
+        => (string.IsNullOrWhiteSpace(pn.PlayerName) ? "Player" : pn.PlayerName)
+           + (pn.IsHost ? " (Host)" : "");
+
     public void RefreshNow()
     {
-        if (NetworkServer.active) RefreshPlayerListServer();
-        else RefreshPlayerListClient();
+        if (!playersList) return;
+
+        var sb = new System.Text.StringBuilder();
+        foreach (var pn in SortedPlayers())
+            sb.AppendLine(RowText(pn));
+
+        playersList.text = sb.ToString();
     }
+
 
     void ClearList()
     {
@@ -246,13 +294,11 @@ public class LobbyUI : MonoBehaviour
         ClearList();
 
         int count = 0;
-        foreach (var kv in NetworkServer.connections)
+        foreach (var pn in SortedPlayers())
         {
             var row = Instantiate(playerListItemPrefab, playerListRoot);
             var txt = row.GetComponent<TMP_Text>();
-            if (txt) txt.text = kv.Value?.identity ?
-                kv.Value.identity.GetComponent<PlayerNetwork>()?.PlayerName ?? $"Player {kv.Key}" :
-                $"Player {kv.Key}";
+            if (txt) txt.text = RowText(pn);
             count++;
         }
 
@@ -266,15 +312,16 @@ public class LobbyUI : MonoBehaviour
 
         ClearList();
 
-        var players = FindObjectsOfType<PlayerNetwork>();
-        foreach (var p in players)
+        int count = 0;
+        foreach (var pn in SortedPlayers())
         {
             var row = Instantiate(playerListItemPrefab, playerListRoot);
             var txt = row.GetComponent<TMP_Text>();
-            if (txt) txt.text = string.IsNullOrWhiteSpace(p.PlayerName) ? "Player" : p.PlayerName;
+            if (txt) txt.text = RowText(pn);
+            count++;
         }
 
-        statusText.text = players.Length >= 2 ? "Ready — waiting for host" : $"Waiting for players ({players.Length}/2)";
+        statusText.text = count >= 2 ? "Ready â€” waiting for host" : $"Waiting for players ({count}/2)";
     }
 
     static string SanitizeName(string raw)
@@ -316,4 +363,5 @@ public class LobbyUI : MonoBehaviour
         // Fallback (not ideal)
         return "127.0.0.1";
     }
+
 }

@@ -1,4 +1,6 @@
 using Mirror;
+using System.Collections;
+using System.Linq;
 using UnityEngine;
 
 public class PlayerNetwork : NetworkBehaviour
@@ -6,33 +8,43 @@ public class PlayerNetwork : NetworkBehaviour
     public static PlayerNetwork Local;
     [SyncVar(hook = nameof(OnNameChanged))] public string PlayerName;
     [SyncVar(hook = nameof(OnHostChanged))] public bool IsHost;
+    [SyncVar] public bool NameReady;
 
     public override void OnStartServer()
     {
         IsHost = connectionToClient != null && connectionToClient.connectionId == 0;
-        var fallback = $"Player {connectionToClient.connectionId}";
-        PlayerName = LobbyUI.LocalPlayerNameOr(fallback);
+        // Do NOT reserve a name here; wait for the client request.
+        PlayerName = ""; // placeholder until approved
+    }
+
+    public override void OnStopServer()
+    {
+        NameRegistry.Release(PlayerName);
     }
 
     public override void OnStartLocalPlayer()
     {
-        Local = this;
-        string n = LobbyUI.Instance ? LobbyUI.LocalPlayerName : PlayerPrefs.GetString("playerName", "Player");
-        if (string.IsNullOrWhiteSpace(n)) n = $"Player {netId}";
-        CmdSetName(n);
+        CmdRequestName(LobbyUI.LocalPlayerNameOr("Player"));
     }
 
-    [Command] void CmdSetName(string n) => PlayerName = Sanitize(n);
-
-    static string Sanitize(string s)
+    [Command]
+    void CmdRequestName(string requested)
     {
-        s = string.IsNullOrWhiteSpace(s) ? "Player" : s.Trim();
-        if (s.Length > 20) s = s[..20];
-        // strip TMP/HTML-ish chars
-        s = s.Replace("<", "‹").Replace(">", "›").Replace("&", "and");
-        return s;
+        // Server validates & reserves a unique name
+        var gc = GameController.Instance;
+        var unique = gc ? gc.ReserveUniqueName(netId, requested) : GameController.Sanitize(requested);
+        PlayerName = unique;
+        IsHost = connectionToClient != null && connectionToClient.connectionId == 0;
     }
 
-    void OnNameChanged(string _, string __)   { LobbyUI.Instance?.RefreshNow(); }
-    void OnHostChanged(bool _, bool __)       { LobbyUI.Instance?.RefreshNow(); }
+    void OnNameChanged(string oldValue, string newValue)
+    {
+        // update any UI that shows the lobby list / local name
+        LobbyUI.Instance?.RefreshNow();
+    }
+
+    void OnHostChanged(bool oldValue, bool newValue)
+    {
+        LobbyUI.Instance?.RefreshNow();
+    }
 }

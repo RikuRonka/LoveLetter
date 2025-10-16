@@ -30,7 +30,6 @@ public class GameController : NetworkBehaviour
     public static GameController Instance { get; private set; }
     int PointsToWin() => sPlayers.Count switch { 2 => 7, 3 => 5, 4 => 4, _ => 4 };
     void Awake() => Instance = this;
-    readonly HashSet<uint> waitingChancellor = new();
 
     class SPlayer
     {
@@ -56,63 +55,145 @@ public class GameController : NetworkBehaviour
     int firstPlayerIndexThisMatch = -1;
     readonly List<uint> matchRoster = new();
     bool rosterLocked = false;
-
+    readonly HashSet<string> takenNames = new(System.StringComparer.OrdinalIgnoreCase);
+    readonly Dictionary<uint, string> nameByNetId = new();
     public override void OnStartServer()
     {
         base.OnStartServer();
         StartCoroutine(BootstrapRoundWhenPlayersReady());
     }
 
-    private IEnumerator BootstrapRoundWhenPlayersReady()
+    [Server]
+    public string GetUniqueName(string requested)
     {
-        while (true)
+        string baseName = Sanitize(requested);
+        if (string.IsNullOrEmpty(baseName)) baseName = "Player";
+
+        if (!takenNames.Contains(baseName))
         {
-            BuildPlayersFromConnections();
-            if (sPlayers.Count >= 2) break;
-            yield return null;
+            takenNames.Add(baseName);
+            return baseName;
         }
 
+        int n = 2;
+        string candidate;
+        do { candidate = $"{baseName} ({n++})"; }
+        while (takenNames.Contains(candidate));
+
+        takenNames.Add(candidate);
+        return candidate;
+    }
+
+
+    [Server]
+    public string ReserveUniqueName(uint netId, string requested)
+    {
+        string baseName = Sanitize(requested);
+        if (string.IsNullOrWhiteSpace(baseName)) baseName = "Player";
+
+        // If this netId already had a name, release it first (rename case)
+        if (nameByNetId.TryGetValue(netId, out var oldName))
+        {
+            // don't remove if it's the same (case-insensitive) — nothing to change
+            if (!string.Equals(oldName, baseName, StringComparison.OrdinalIgnoreCase))
+            {
+                takenNames.Remove(oldName);
+                nameByNetId.Remove(netId);
+            }
+            else
+            {
+                // keep current name
+                return oldName;
+            }
+        }
+
+        // Find unique candidate
+        if (!takenNames.Contains(baseName))
+        {
+            takenNames.Add(baseName);
+            nameByNetId[netId] = baseName;
+            return baseName;
+        }
+
+        int n = 2;
+        string candidate;
+        do { candidate = $"{baseName} ({n++})"; }
+        while (takenNames.Contains(candidate));
+
+        takenNames.Add(candidate);
+        nameByNetId[netId] = candidate;
+        return candidate;
+    }
+
+    [Server]
+    public void ReleaseNameFor(uint netId)
+    {
+        if (nameByNetId.TryGetValue(netId, out var owned))
+        {
+            takenNames.Remove(owned);
+            nameByNetId.Remove(netId);
+        }
+    }
+
+    public static string Sanitize(string s)
+    {
+        s = string.IsNullOrWhiteSpace(s) ? "Player" : s.Trim();
+        if (s.Length > 20) s = s[..20];
+        return s;
+    }
+
+    IEnumerator BootstrapRoundWhenPlayersReady()
+    {
+        yield return new WaitUntil(() =>
+            NetworkServer.active &&
+            NetworkServer.connections.Count >= 2 &&
+            NetworkServer.connections.Values.All(c => c?.identity)
+        );
+
+        // wait until every connected identity has a non-empty PlayerName
+        yield return new WaitUntil(() =>
+            NetworkServer.connections.Values
+                .Where(c => c?.identity)
+                .Select(c => c.identity.GetComponent<PlayerNetwork>())
+                .All(pn => pn != null && !string.IsNullOrWhiteSpace(pn.PlayerName))
+        );
+
+        BuildPlayersFromConnections();
         StartNewRound();
     }
 
-    void BuildPlayersFromConnections()
+    public void BuildPlayersFromConnections()
     {
         sPlayers.Clear();
-
-        if (rosterLocked && matchRoster.Count > 0)
-        {
-            foreach (var kv in NetworkServer.connections.OrderBy(k => k.Key))
-            {
-                var conn = kv.Value;
-                if (!conn?.identity) continue;
-                if (!matchRoster.Contains(conn.identity.netId)) continue;
-
-                AddSPlayer(conn);
-            }
-            return;
-        }
 
         foreach (var kv in NetworkServer.connections.OrderBy(k => k.Key))
         {
             var conn = kv.Value;
             if (!conn?.identity) continue;
-            AddSPlayer(conn);
-            if (sPlayers.Count == 4) break;
-        }
 
-        void AddSPlayer(NetworkConnectionToClient conn)
-        {
             var pn = conn.identity.GetComponent<PlayerNetwork>();
             sPlayers.Add(new SPlayer
             {
                 Conn = conn,
                 Identity = conn.identity,
-                Name = pn && !string.IsNullOrWhiteSpace(pn.PlayerName) ? pn.PlayerName : $"Player {conn.connectionId}",
+                Name = pn && !string.IsNullOrWhiteSpace(pn.PlayerName)
+                        ? pn.PlayerName
+                        : $"Player {conn.connectionId}",
                 Eliminated = false,
                 Protected = false,
                 Score = 0
             });
+
+            if (sPlayers.Count == 4) break;
         }
+        Debug.Log($"[SRV] Built {sPlayers.Count} server players: " +
+          string.Join(", ", sPlayers.Select(p => $"{NameOf(p)}#{p.NetId}")));
+    }
+
+    [Server]
+    public void ServerRebroadcastStateNames()
+    {
+        BroadcastState();
     }
 
     void StartNewRound()
@@ -163,7 +244,7 @@ public class GameController : NetworkBehaviour
 
         if (currentIndex < 0 || currentIndex >= sPlayers.Count)
             currentIndex = 0;
-        RpcLog($"New round. {sPlayers[currentIndex].Name} starts.");
+        RpcLog($"New round. {NameOf(sPlayers[currentIndex])} starts.");
         BroadcastState();
         StartTurn();
     }
@@ -220,27 +301,22 @@ public class GameController : NetworkBehaviour
             CurrentIndex = currentIndex,
             DeckCount = deck.Count,
             BurnedCount = burnedCount,
-            Players = sPlayers.Select(p =>
+            Players = sPlayers.Select(p => new PublicPlayer
             {
-                var liveName = p.Identity ? p.Identity.GetComponent<PlayerNetwork>()?.PlayerName : null;
-                return new PublicPlayer
-                {
-                    NetId = p.NetId,
-                    Name = string.IsNullOrWhiteSpace(liveName) ? LiveName(p) : liveName,
-                    Eliminated = p.Eliminated,
-                    Protected = p.Protected,
-                    Discards = new List<CardType>(p.Discards),
-                    Score = p.Score
-                };
+                NetId = p.NetId,
+                Name = NameOf(p),
+                Eliminated = p.Eliminated,
+                Protected = p.Protected,
+                Discards = new List<CardType>(p.Discards),
+                Score = p.Score
             }).ToList()
         };
-        RpcState(ps);
-    }
 
-    [TargetRpc]
-    void TargetFreezeUntilChoice(NetworkConnection target)
-    {
-        HandUI.Instance?.EndTurn();
+#if UNITY_SERVER || UNITY_EDITOR
+        Debug.Log($"[SRV] RpcState players={ps.Players.Count}, currentIndex={ps.CurrentIndex}, deck={ps.DeckCount}");
+#endif
+
+        RpcState(ps);
     }
 
     [ClientRpc] void RpcState(PublicState s) => BoardUI.Instance?.RenderState(s);
@@ -399,13 +475,13 @@ public class GameController : NetworkBehaviour
                 RpcLog($"{NameOf(actor)} played {CardLabel(CardType.King)}. Choose a player to trade hands with.");
                 return;
             }
-            case CardType.Countess: RpcLog($"{actor.Name} played {CardLabel(CardType.Countess)}."); break;
+            case CardType.Countess: RpcLog($"{NameOf(actor)} played {CardLabel(CardType.Countess)}."); break;
             case CardType.Princess: ResolvePrincess(actor); break;
             case CardType.Chancellor:
             ResolveChancellor(actor);
             BroadcastState();
             return;
-            default: RpcLog($"{actor.Name} played {card}."); break;
+            default: RpcLog($"{NameOf(actor)} played {card}."); break;
         }
 
         BroadcastState();
@@ -436,15 +512,15 @@ public class GameController : NetworkBehaviour
 
     static readonly string[] PlayerPalette =
     {
-    "#4CC9F0",
-    "#F72585",
-    "#E9C46A",
-    "#2A9D8F",
-    "#F77F00",
-    "#9B5DE5",
-    "#43AA8B",
-    "#577590", 
-};
+        "#4CC9F0",
+        "#F72585",
+        "#E9C46A",
+        "#2A9D8F",
+        "#F77F00",
+        "#9B5DE5",
+        "#43AA8B",
+        "#577590", 
+    };
 
     static string PlayerColor(uint netId)
     {
@@ -498,19 +574,10 @@ public class GameController : NetworkBehaviour
             PlayerActions.Local?.ChooseKing(chosenTarget);
         });
     }
-    private static string LiveName(SPlayer p)
-    {
-        if (p?.Identity)
-        {
-            var pn = p.Identity.GetComponent<PlayerNetwork>();
-            if (pn != null && !string.IsNullOrWhiteSpace(pn.PlayerName))
-                return pn.PlayerName;
-        }
-        return p?.Name ?? "?";
-    }
+
     [Server]
     public void CmdKingTarget(uint targetNetId, NetworkConnectionToClient sender)
-    {
+    {   
         if (!roundActive) return;
 
         var actor = sPlayers.FirstOrDefault(p => p.Conn == sender);
@@ -519,7 +586,7 @@ public class GameController : NetworkBehaviour
         var target = GetValidTarget(targetNetId, requireNotProtected: true, allowSelf: false);
         if (target == null)
         {
-            RpcLog($"{actor.Name} played {CardLabel(CardType.King)}, invalid target.");
+            RpcLog($"{NameOf(actor)} played {CardLabel(CardType.King)}, invalid target.");
             Finish();
             return;
         }
@@ -531,7 +598,7 @@ public class GameController : NetworkBehaviour
         PushHandTo(actor);
         PushHandTo(target);
 
-        RpcLog($"{actor.Name} traded hands with {target.Name}.");
+        RpcLog($"{NameOf(actor)} traded hands with {NameOf(target)}.");
 
         Finish();
         return;
@@ -566,25 +633,6 @@ public class GameController : NetworkBehaviour
     {
         var live = p.Identity ? p.Identity.GetComponent<PlayerNetwork>()?.PlayerName : null;
         return string.IsNullOrWhiteSpace(live) ? p.Name : live;
-    }
-
-    string ExplainNoTargets(SPlayer actor, bool allowSelf)
-    {
-        var others = sPlayers.Where(p => !p.Eliminated && p != actor).ToList();
-        if (others.Count == 0)
-            return "there are no other players.";
-
-        var protectedOpps = others.Where(p => p.Protected).ToList();
-        var unprotectedOpps = others.Where(p => !p.Protected).ToList();
-
-        if (unprotectedOpps.Count == 0)
-        {
-            if (protectedOpps.Count == 1)
-                return $"{NameOf(protectedOpps[0])} is protected by {CardLabel(CardType.Handmaid)}.";
-            return "all opponents are protected by Handmaid.";
-        }
-
-        return "no valid targets.";
     }
 
     [Server]
@@ -657,13 +705,13 @@ public class GameController : NetworkBehaviour
 
         if (target == null)
         {
-            RpcLog($"{actor?.Name} played {CardLabel(CardType.Priest)}, but {reason}");
+            RpcLog($"{NameOf(actor)} played {CardLabel(CardType.Priest)}, but {reason}");
             EndAfter();
             return;
         }
 
-        TargetShowPeek(actor.Conn, target.Name, target.Hand.FirstOrDefault());
-        RpcLog($"{actor.Name} looked at {target.Name}'s hand.");
+        TargetShowPeek(actor.Conn, NameOf(target), target.Hand.FirstOrDefault());
+        RpcLog($"{NameOf(actor)} looked at {NameOf(target)}'s hand.");
 
         EndAfter();
 
@@ -673,21 +721,6 @@ public class GameController : NetworkBehaviour
             TryEndOfRound();
             if (roundActive) EndTurnAdvance();
         }
-    }
-    List<PublicPlayer> BuildPublicTargets(SPlayer actor)
-    {
-        return sPlayers
-            .Where(p => !p.Eliminated && !p.Protected && p != actor)
-            .Select(p => new PublicPlayer
-            {
-                NetId = p.NetId,
-                Name = LiveName(p),
-                Eliminated = p.Eliminated,
-                Protected = p.Protected,
-                Discards = new List<CardType>(p.Discards),
-                Score = p.Score
-            })
-            .ToList();
     }
 
     [TargetRpc]
@@ -710,23 +743,27 @@ public class GameController : NetworkBehaviour
         if (actor == null || actor.Eliminated) return;
 
         var target = GetValidTarget(targetNetId, requireNotProtected: true, allowSelf: false);
-        if (target == null) { RpcLog($"{actor.Name} Guard guess: invalid target."); EndAfter(); return; }
+        if (target == null) { RpcLog($"{NameOf(actor)} Guard guess: invalid target."); EndAfter(); return; }
 
-        if (guess == 0 || guess == CardType.Guard) { RpcLog($"{CardLabel(CardType.Guard)} must guess a non-Guard card."); EndAfter(); return; }
+        if (guess == CardType.None || guess == CardType.Guard)
+        {
+            RpcLog($"{CardLabel(CardType.Guard)} must guess a non-Guard card.");
+            EndAfter();
+            return;
+        }
 
         var targetCard = target.Hand.FirstOrDefault();
         if (targetCard == guess)
         {
-            RpcLog($"{actor.Name} guessed {CardLabel(guess)} — {target.Name} eliminated!");
+            RpcLog($"{NameOf(actor)} guessed {CardLabel(guess)} — {NameOf(target)} eliminated!");
             Eliminate(target);
         }
         else
         {
-            RpcLog($"{actor.Name} guessed {CardLabel(guess)} — wrong.");
+            RpcLog($"{NameOf(actor)} guessed {CardLabel(guess)} — wrong.");
         }
 
         EndAfter();
-
         void EndAfter()
         {
             BroadcastState();
@@ -763,7 +800,7 @@ public class GameController : NetworkBehaviour
                 deck.Add(c);
 
         chancellorPending.Remove(actor.NetId);
-        RpcLog($"{actor.Name} kept {keep} (Chancellor).");
+        RpcLog($"{NameOf(actor)} kept {keep} (Chancellor).");
 
         BroadcastState();
         TryEndOfRound();
@@ -778,10 +815,10 @@ public class GameController : NetworkBehaviour
     {
         var reason = TargetInvalidReason(actor, targetNetId, allowSelf: true, requireNotProtected: false, out var target);
 
-        if (target == null) { RpcLog($"{actor.Name} played {CardLabel(CardType.Priest)}, but {reason}."); return; }
+        if (target == null) { RpcLog($"{NameOf(actor)} played {CardLabel(CardType.Priest)}, but {reason}."); return; }
 
-        TargetShowPeek(actor.Conn, target.Name, target.Hand.FirstOrDefault());
-        RpcLog($"{actor.Name} looked at {target.Name}'s hand.");
+        TargetShowPeek(actor.Conn, NameOf(target), target.Hand.FirstOrDefault());
+        RpcLog($"{NameOf(actor)} looked at {NameOf(target)}'s hand.");
     }
 
     // Baron — compare hands; lower value eliminated (tie = none)
@@ -789,31 +826,31 @@ public class GameController : NetworkBehaviour
     {
         var reason = TargetInvalidReason(actor, targetNetId, allowSelf: true, requireNotProtected: false, out var target);
 
-        if (target == null) { RpcLog($"{actor.Name} played {CardLabel(CardType.Baron)}, but {reason}."); return; }
+        if (target == null) { RpcLog($"{NameOf(actor)} played {CardLabel(CardType.Baron)}, but {reason}."); return; }
 
         var a = actor.Hand.FirstOrDefault();
         var b = target.Hand.FirstOrDefault();
         int va = CardDB.Value[a];
         int vb = CardDB.Value[b];
 
-        if (va == vb) { RpcLog($"{actor.Name} and {target.Name} tied ({a} vs {b}). Nobody is eliminated."); return; }
+        if (va == vb) { RpcLog($"{NameOf(actor)} and {NameOf(target)} tied ({a} vs {b}). Nobody is eliminated."); return; }
 
         var loser = (va < vb) ? actor : target;
-        RpcLog($"{actor.Name} compares with {target.Name}: {(va < vb ? "loses" : "wins")} ({a} vs {b}).");
+        RpcLog($"{NameOf(actor)} compares with {NameOf(target)}: {(va < vb ? "loses" : "wins")} ({a} vs {b}).");
         Eliminate(loser);
     }
 
     void ResolveHandmaid(SPlayer actor)
     {
         actor.Protected = true;
-        RpcLog($"{actor.Name} played {CardLabel(CardType.Handmaid)} and is protected until their next turn.");
+        RpcLog($"{NameOf(actor)} played {CardLabel(CardType.Handmaid)} and is protected until their next turn.");
     }
 
     void ResolvePrince(SPlayer actor, uint targetNetId)
     {
         var reason = TargetInvalidReason(actor, targetNetId, allowSelf: true, requireNotProtected: false, out var target);
 
-        if (target == null) { RpcLog($"{actor.Name} played {CardLabel(CardType.Prince)}, but {reason}"); return; }
+        if (target == null) { RpcLog($"{NameOf(actor)} played {CardLabel(CardType.Prince)}, but {reason}"); return; }
 
         var discarded = target.Hand.FirstOrDefault();
         target.Hand.Clear();
@@ -823,12 +860,12 @@ public class GameController : NetworkBehaviour
 
         if (discarded == CardType.Princess)
         {
-            RpcLog($"{actor.Name} forced {target.Name} to discard {CardLabel(CardType.Princess)} — eliminated!");
+            RpcLog($"{NameOf(actor)} forced {NameOf(target)} to discard {CardLabel(CardType.Princess)} — eliminated!");
             Eliminate(target);
         }
         else
         {
-            RpcLog($"{actor.Name} forced {target.Name} to discard {discarded}.");
+            RpcLog($"{NameOf(actor)} forced {NameOf(target)} to discard {discarded}.");
             if (deck.Count > 0 && !target.Eliminated)
             {
                 var c = deck[0]; deck.RemoveAt(0);
@@ -846,7 +883,7 @@ public class GameController : NetworkBehaviour
     void ResolveKing(SPlayer actor, uint targetNetId)
     {
         var target = GetValidTarget(targetNetId, requireNotProtected: true, allowSelf: false);
-        if (target == null) { RpcLog($"{actor.Name} played {CardLabel(CardType.King)}, invalid target."); return; }
+        if (target == null) { RpcLog($"{NameOf(actor)} played {CardLabel(CardType.King)}, invalid target."); return; }
 
         var temp = new List<CardType>(actor.Hand);
         actor.Hand.Clear(); actor.Hand.AddRange(target.Hand);
@@ -855,13 +892,13 @@ public class GameController : NetworkBehaviour
         TargetReplaceHand(actor.Conn, new List<CardType>(actor.Hand));
         TargetReplaceHand(target.Conn, new List<CardType>(target.Hand));
 
-        RpcLog($"{actor.Name} traded hands with {target.Name}.");
+        RpcLog($"{NameOf(actor)} traded hands with {NameOf(target)}.");
     }
 
     void ResolvePrincess(SPlayer actor)
     {
         Eliminate(actor);
-        RpcLog($"{actor.Name} discarded Princess and is eliminated!");
+        RpcLog($"{NameOf(actor)} discarded Princess and is eliminated!");
     }
 
     void ResolveChancellor(SPlayer actor)
@@ -872,12 +909,12 @@ public class GameController : NetworkBehaviour
             var c = deck[0]; deck.RemoveAt(0);
             options.Add(c);
         }
-        if (options.Count <= 1) { RpcLog($"{actor.Name} played {CardLabel(CardType.Chancellor)} (no choices)."); return; }
+        if (options.Count <= 1) { RpcLog($"{NameOf(actor)} played {CardLabel(CardType.Chancellor)} (no choices)."); return; }
 
         chancellorPending[actor.NetId] = options;
 
         TargetChancellorChoice(actor.Conn, options.ToArray());
-        RpcLog($"{actor.Name} played {CardLabel(CardType.Chancellor)} and drew {options.Count - 1}.");
+        RpcLog($"{NameOf(actor)} played {CardLabel(CardType.Chancellor)} and drew {options.Count - 1}.");
     }
 
     void DealTo(SPlayer p, int count)
@@ -921,7 +958,6 @@ public class GameController : NetworkBehaviour
 
     void EndRoundBySurvivorOrHighest()
     {
-        // Spy bonus: exactly one unique player used/discarded Spy this round = +1 token
         if (spyPlayedThisRound.Count == 1)
         {
             uint spyNetId = spyPlayedThisRound.First();
@@ -933,7 +969,6 @@ public class GameController : NetworkBehaviour
             }
         }
 
-        // Determine winner(s)
         var alive = sPlayers.Where(p => !p.Eliminated).ToList();
 
         List<SPlayer> winners = new();
@@ -944,7 +979,6 @@ public class GameController : NetworkBehaviour
         }
         else
         {
-            // Highest hand value among remaining players (everyone should have 1 card)
             int maxHand = alive.Where(p => p.Hand.Count > 0)
                                .Select(p => CardDB.Value[p.Hand[0]])
                                .DefaultIfEmpty(-1).Max();
@@ -956,14 +990,11 @@ public class GameController : NetworkBehaviour
             }
             else
             {
-                // Tie-breaker: highest sum of discards (official rule)
-                int BestDiscardSum(SPlayer sp) => sp.Discards.Sum(c => CardDB.Value[c]);
+                static int BestDiscardSum(SPlayer sp) => sp.Discards.Sum(c => CardDB.Value[c]);
 
                 int bestSum = tied.Select(BestDiscardSum).Max();
                 winners = tied.Where(p => BestDiscardSum(p) == bestSum).ToList();
 
-                // If still tied after sums, all tied players win a token (per rules)
-                // (The code above already keeps all tied in 'winners')
             }
         }
 
@@ -982,12 +1013,11 @@ public class GameController : NetworkBehaviour
         }
         else
         {
-            RpcLog("No winner could be determined."); // defensive
+            RpcLog("No winner could be determined.");
         }
 
         roundActive = false;
 
-        // Build summary payload
         var rows = sPlayers
             .Select(p => new SummaryRow
             {
@@ -999,24 +1029,18 @@ public class GameController : NetworkBehaviour
             .ThenBy(r => r.Name)
             .ToArray();
 
-        // Decide match over
         int target = PointsToWin();
         bool isMatchOver = sPlayers.Any(p => p.Score >= target);
 
-        // If multiple winners, choose one NetId just for the title (first by name to be stable)
         uint winnerNetIdForTitle = winners
             .OrderBy(p => NameOf(p))
             .Select(p => p.NetId)
             .FirstOrDefault();
 
-        // Show summary to everyone
         RpcShowRoundSummary(rows, winnerNetIdForTitle, target, isMatchOver);
 
-        // Update board state underneath (harmless)
         BroadcastState();
 
-        // IMPORTANT: do NOT auto start the next round here.
-        // Host will press "Next round" -> CmdNextRound -> ServerStartNextRound() which calls StartNewRound() immediately.
     }
 
     [ClientRpc]
@@ -1039,9 +1063,6 @@ public class GameController : NetworkBehaviour
         RoundSummaryUI.Instance?.Show(rows, winnerNetId, pointsToWin, isMatchOver);
     }
 
-    [ClientRpc]
-   // void RpcShowMatchOver(PublicState s, uint winnerNetId, int targetToWin)
-   //     => RoundSummaryUI.Instance?.Show(s, winnerNetId, targetToWin, isMatchOver: true);
 
 
     [Server]
