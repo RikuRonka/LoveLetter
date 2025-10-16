@@ -20,14 +20,10 @@ public class ChancellorPrompt : MonoBehaviour
     void Reset()
     {
         if (!panel && transform.childCount > 0) panel = transform.GetChild(0).gameObject;
-        // try to auto-find common names to reduce wiring mistakes
         if (!optionsRoot) optionsRoot = transform.Find("Panel/OptionsRoot");
         if (!cardRoot) cardRoot = transform.Find("Panel/CardRoot");
     }
 
-    /// <summary>
-    /// Opens the Chancellor choice UI with 3 cards, and invokes onKeep with the chosen card.
-    /// </summary>
     public static void Show(CardType[] options, Action<CardType> onKeep)
     {
         var i = Instance ?? FindFirstObjectByType<ChancellorPrompt>();

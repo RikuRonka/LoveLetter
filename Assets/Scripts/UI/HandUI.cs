@@ -39,22 +39,16 @@ public class HandUI : MonoBehaviour
                 continue;
             }
 
-            // art (null-safe; if null you’ll just see empty card)
-            var art = CardDB.Sprite(c);
-            int idx = i;
-
             view.Setup(CardDB.Sprite(c), () =>
             {
                 if (!myTurn) return;
                 if (mustCountess && c != CardType.Countess) return;
 
-                // (target/guess selection if needed)
                 PlayerActions.Local?.PlayCard(c, 0, 0);
                 myTurn = false;
                 Refresh();
             }, playable);
 
-            // interactability
             var btn = go.GetComponent<Button>();
             if (btn) btn.interactable = playable;
         }

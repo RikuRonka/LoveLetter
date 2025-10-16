@@ -1,10 +1,8 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-// Keep enum names EXACTLY matching your Resources sprite names
 public enum CardType { Spy = 0, Guard = 1, Priest = 2, Baron = 3, Handmaid = 4, Prince = 5, Chancellor = 6, King = 7, Countess = 8, Princess = 9 }
 
-// One place for rules, counts, values, text, and sprites (client-side)
 public static class CardDB
 {
     public static readonly Dictionary<CardType, int> Count = new()
@@ -21,7 +19,6 @@ public static class CardDB
         { CardType.Princess, 1 },
     };
 
-    // Card values for end-of-round compare (official)
     public static readonly Dictionary<CardType, int> Value = new()
     {
         { CardType.Spy, 0 },

@@ -52,25 +52,21 @@ public class TargetPrompt : MonoBehaviour
         i.InternalShow(ids, names, null, onTarget, null);
     }
 
-    // Targets + guesses (Guard)
     public static void ShowTargetsAndGuesses(IReadOnlyList<uint> ids, IReadOnlyList<string> names, IReadOnlyList<CardType> guesses, Action<uint, CardType> onBoth)
     {
         var i = Ensure(); if (i == null) return;
         i.InternalShow(ids, names, guesses, null, onBoth);
     }
 
-    // (If you ever need guesses only, you can add a ShowGuesses(..., Action<CardType>) overload.)
-
-    // ===== Implementation =====
     void InternalShow(
-        IReadOnlyList<uint> ids,
-        IReadOnlyList<string> names,
-        IReadOnlyList<CardType> guesses,
-        Action<uint> onTarget,
-        Action<uint, CardType> onBoth)
+    IReadOnlyList<uint> ids,
+    IReadOnlyList<string> names,
+    IReadOnlyList<CardType> guesses,
+    Action<uint> onTarget,
+    Action<uint, CardType> onBoth)
     {
-        _ids = ids;
-        _names = names;
+        _ids = ids ?? Array.Empty<uint>();
+        _names = names ?? Array.Empty<string>();
         _guesses = guesses;
         _onTarget = onTarget;
         _onTargetAndGuess = onBoth;
@@ -78,25 +74,53 @@ public class TargetPrompt : MonoBehaviour
         _selectedTarget = 0;
         _selectedGuess = 0;
 
-        // build UI
+        bool hasGuesses = _guesses != null && _guesses.Count > 0;
+        bool targetsOnly = !hasGuesses;
+        int targetCount = _ids.Count;
+
+        // ===== 2P QUALITY-OF-LIFE =====
+        // A) Targets-only (Baron/Priest/King/Prince) with exactly one target -> auto-confirm, no UI
+        if (targetsOnly && targetCount == 1)
+        {
+            _onTarget?.Invoke(_ids[0]);
+            Close();
+            return;
+        }
+
+        // B) Guard with exactly one target -> preselect target, hide target list, show only guesses
+        bool hideTargetList = false;
+        if (hasGuesses && targetCount == 1)
+        {
+            _selectedTarget = _ids[0];
+            hideTargetList = true;
+        }
+
+        // ===== Build UI =====
         RebuildTargets();
         RebuildGuesses();
 
-        // visibility & hints
-        if (targetListRoot) targetListRoot.gameObject.SetActive(_ids != null && _ids.Count > 0);
-        if (guessListRoot) guessListRoot.gameObject.SetActive(_guesses != null && _guesses.Count > 0);
-        if (selectTargetText) selectTargetText.gameObject.SetActive(_ids != null && _ids.Count > 0);
-        if (footerText)
+        if (selectTargetText)
         {
-            if (_guesses == null || _guesses.Count == 0) footerText.text = "Choose a player";
-            else footerText.text = (_selectedTarget == 0) ? "Choose a player" : "Choose a card";
+            selectTargetText.gameObject.SetActive(true);
+            if (hideTargetList)
+                selectTargetText.text = $"Target: {_names[0]}";
+            else
+                selectTargetText.text = targetsOnly ? "Choose a player" : "Select target";
         }
 
-        // show
-        if (panel) panel.SetActive(true); else gameObject.SetActive(true);
+        if (footerText)
+        {
+            footerText.gameObject.SetActive(hasGuesses);
+            if (hasGuesses)
+                footerText.text = (_selectedTarget == 0) ? "Choose a player" : "Choose a card";
+        }
 
-        // For Guard flow: guesses disabled until a target chosen (but allow reverse order by remembering choice)
-        SetGuessButtonsInteractable(_selectedTarget != 0 || (_guesses == null || _guesses.Count == 0));
+        if (targetListRoot)
+            targetListRoot.gameObject.SetActive(!hideTargetList && targetCount > 0);
+
+        SetGuessButtonsInteractable(hasGuesses && _selectedTarget != 0);
+
+        if (panel) panel.SetActive(true); else gameObject.SetActive(true);
     }
 
     void RebuildTargets()
@@ -116,15 +140,16 @@ public class TargetPrompt : MonoBehaviour
             {
                 _selectedTarget = id;
 
-                // if targets+guesses AND a guess is already chosen -> auto confirm
                 if (_onTargetAndGuess != null && _selectedGuess != 0)
                     ConfirmBoth();
                 else if (_onTarget != null && (_guesses == null || _guesses.Count == 0))
                     ConfirmTarget();
 
-                // enable guesses after target picked (Guard UX)
-                SetGuessButtonsInteractable(true);
-                if (footerText) footerText.text = (_guesses == null || _guesses.Count == 0) ? "Chosen" : "Choose a card";
+                bool targetsOnly = (_guesses == null || _guesses.Count == 0);
+                SetGuessButtonsInteractable(!targetsOnly && _selectedTarget != 0);
+
+                if (footerText && !targetsOnly)
+                    footerText.text = (_selectedTarget == 0) ? "Choose a player" : "Choose a card";
             });
         }
     }
@@ -139,7 +164,7 @@ public class TargetPrompt : MonoBehaviour
 
         foreach (var ct in _guesses)
         {
-            if (ct == CardType.Guard || ct == 0) continue; // safety
+            if (ct == CardType.Guard || ct == 0) continue;
             var go = Instantiate(guessButtonPrefab, guessListRoot);
             var btn = go.GetComponent<Button>();
             var txt = go.GetComponentInChildren<TMP_Text>();
@@ -151,7 +176,7 @@ public class TargetPrompt : MonoBehaviour
             {
                 _selectedGuess = guess;
 
-                if (_selectedTarget != 0) ConfirmBoth(); // auto confirm once both chosen
+                if (_selectedTarget != 0) ConfirmBoth();
                 else if (footerText) footerText.text = "Choose a player";
             });
         }
@@ -192,6 +217,6 @@ public class TargetPrompt : MonoBehaviour
     {
         if (!root) return;
         for (int i = root.childCount - 1; i >= 0; i--)
-            GameObject.Destroy(root.GetChild(i).gameObject);
+            Destroy(root.GetChild(i).gameObject);
     }
 }

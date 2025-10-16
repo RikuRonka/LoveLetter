@@ -1,5 +1,7 @@
+using System.Collections;
 using TMPro;
 using UnityEngine;
+using UnityEngine.UI;
 
 public class BoardUI : MonoBehaviour
 {
@@ -12,6 +14,9 @@ public class BoardUI : MonoBehaviour
     [Header("Turn Colors")]
     [SerializeField] Color yourTurnColor = new(0.20f, 0.85f, 0.35f);
     [SerializeField] Color oppTurnColor = new(0.90f, 0.30f, 0.30f);
+
+    [Header("Scroll")]
+    [SerializeField] ScrollRect logScroll;
 
     void Awake() => Instance = this;
 
@@ -52,5 +57,17 @@ public class BoardUI : MonoBehaviour
         else
             logText.text += "\n" + msg;
 
+        if (logScroll) StartCoroutine(ForceBottomNextFrame());
+
+    }
+
+    IEnumerator ForceBottomNextFrame()
+    {
+        yield return null;
+        Canvas.ForceUpdateCanvases();
+
+        float ch = logScroll.content.rect.height;
+        float vh = logScroll.viewport.rect.height;
+        logScroll.verticalNormalizedPosition = (ch <= vh) ? 1f : 0f;
     }
 }

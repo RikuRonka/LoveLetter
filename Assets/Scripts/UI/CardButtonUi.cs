@@ -6,7 +6,7 @@ public class CardButtonUI : MonoBehaviour
 {
     [SerializeField] Image artImage;
     [SerializeField] Button button;
-    [SerializeField] PlayableHighlight highlight;   // NEW (optional)
+    [SerializeField] PlayableHighlight highlight;
 
     void Reset()
     {
@@ -25,10 +25,8 @@ public class CardButtonUI : MonoBehaviour
         button.onClick.RemoveAllListeners();
         if (onClick != null) button.onClick.AddListener(() => onClick());
 
-        // visual state
         if (highlight) highlight.SetPlayable(playable);
 
-        // dim if not playable
         var cg = GetComponent<CanvasGroup>();
         if (!cg) cg = gameObject.AddComponent<CanvasGroup>();
         cg.interactable = playable;

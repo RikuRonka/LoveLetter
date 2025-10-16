@@ -6,7 +6,10 @@ public class PlayerActions : NetworkBehaviour
     public static PlayerActions Local;
     public uint MyNetId => netId;
     void Awake() { if (isLocalPlayer) Local = this; }
-    public override void OnStartLocalPlayer() { Local = this; }
+    public override void OnStartLocalPlayer()
+    {
+        Local = this;
+    }
 
     public void PlayCard(CardType card, uint targetNetId = 0, CardType guardGuess = 0)
     {
@@ -19,6 +22,21 @@ public class PlayerActions : NetworkBehaviour
     {
         GameController.Instance.CmdPlayCard(actorNetId, card, targetNetId, guardGuess);
     }
+
+    [Command]
+    public void CmdNextRound()
+    {
+
+        var pn = GetComponent<PlayerNetwork>();
+        if (pn == null || !pn.IsHost)
+        {
+            Debug.LogWarning("[SRV] CmdNextRound rejected: not host");
+            return;
+        }
+
+        GameController.Instance.ServerStartNextRound();
+    }
+
 
     [Command]
     public void ChooseChancellor(CardType keep)

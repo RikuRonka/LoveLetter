@@ -8,7 +8,12 @@ public class LLNetworkManager : NetworkManager
     [SerializeField] string menuSceneName = "MainMenu";
     public static string LastDisconnectReason;
 
-    // host (server+client) pressed Stop Hosting / app closed
+
+    public override void OnStartServer()
+    {
+        base.OnStartServer();
+        maxConnections = 4;
+    }
     public override void OnStopHost()
     {
         base.OnStopHost();
@@ -16,17 +21,16 @@ public class LLNetworkManager : NetworkManager
         LoadMenuIfNeeded();
     }
 
-    // called on clients when the server disappears (host left)
     public override void OnClientDisconnect()
     {
         base.OnClientDisconnect();
         LastDisconnectReason = "Lost connection to host.";
+       // if (SceneManager.GetActiveScene().name != "MainMenu")
+       //     SceneManager.LoadScene("MainMenu");
         // If Offline Scene is set, Mirror will load it automatically next frame.
         // Don't try to show UI here—the menu scene isn't loaded yet.
     }
 
-
-    // extra safety net for client shutdown paths
     public override void OnStopClient()
     {
         base.OnStopClient();
@@ -35,16 +39,14 @@ public class LLNetworkManager : NetworkManager
 
     void LoadMenuIfNeeded()
     {
-        // already in menu?
         if (SceneManager.GetActiveScene().name == menuSceneName) return;
 
-        // ensure networking is fully stopped before changing scenes
         if (NetworkClient.isConnected)
         {
             StopClient();
         }
 
-        // load menu scene
         SceneManager.LoadScene(menuSceneName);
     }
+
 }

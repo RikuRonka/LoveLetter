@@ -9,7 +9,6 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
-using UnityEngine.Windows;
 
 public class LobbyUI : MonoBehaviour
 {
@@ -32,9 +31,7 @@ public class LobbyUI : MonoBehaviour
 
     public static LobbyUI Instance { get; private set; }
     public static string LocalPlayerName { get; private set; } = "Player";
-
     Coroutine refreshCo;
-    const int MIN_PLAYERS = 2;
 
     void Update()
     {
@@ -48,7 +45,6 @@ public class LobbyUI : MonoBehaviour
     {
         ipInput.text = "localhost";
         Instance = this;
-        // load last used name
         var saved = PlayerPrefs.GetString("playerName", "");
         if (!string.IsNullOrWhiteSpace(saved)) nameInput.text = saved;
         ShowPreHost();
@@ -70,7 +66,6 @@ public class LobbyUI : MonoBehaviour
 
     void OnSceneLoaded(Scene s, LoadSceneMode m)
     {
-        // ensure no stale coroutine keeps touching destroyed UI
         StopRefresh();
     }
 
@@ -98,8 +93,7 @@ public class LobbyUI : MonoBehaviour
         Application.Quit();
     }
 
-    // --- helpers ---
-    static bool IsHostInstance() => NetworkServer.active && NetworkClient.active; // host = server+client
+    static bool IsHostInstance() => NetworkServer.active && NetworkClient.active;
     void UpdateHostOnlyControls()
     {
         bool isHost = IsHostInstance();
@@ -107,10 +101,8 @@ public class LobbyUI : MonoBehaviour
         if (stopHostingButton) stopHostingButton.gameObject.SetActive(isHost);
     }
 
-    // ===== Buttons =====
     public void HostGame()
     {
-        // save & cache name
         LocalPlayerName = SanitizeName(nameInput.text);
         PlayerPrefs.SetString("playerName", LocalPlayerName);
 
@@ -121,7 +113,6 @@ public class LobbyUI : MonoBehaviour
 
     public void JoinGame()
     {
-        // save & cache name
         LocalPlayerName = SanitizeName(nameInput.text);
         PlayerPrefs.SetString("playerName", LocalPlayerName);
 
@@ -219,7 +210,6 @@ public class LobbyUI : MonoBehaviour
     {
         while (true)
         {
-            // break if UI is gone or we left networking
             if (this == null || !gameObject || !NetworkClient.active)
             {
                 ShowPreHost();
