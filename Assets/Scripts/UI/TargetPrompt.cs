@@ -1,6 +1,7 @@
 using Mirror;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -44,27 +45,38 @@ public class TargetPrompt : MonoBehaviour
         return Instance;
     }
 
-    static string LiveNameFor(uint netId)
+    string NameFor(uint netId)
     {
-        if (NetworkClient.spawned != null &&
-            NetworkClient.spawned.TryGetValue(netId, out var ni) &&
-            ni != null)
+        // Prefer the live PlayerNetwork instance on THIS client
+        if (NetworkClient.active && NetworkClient.spawned != null &&
+            NetworkClient.spawned.TryGetValue(netId, out var nid) && nid != null)
         {
-            var pn = ni.GetComponent<PlayerNetwork>();
+            var pn = nid.GetComponent<PlayerNetwork>();
             if (pn != null && !string.IsNullOrWhiteSpace(pn.PlayerName))
                 return pn.PlayerName;
         }
-        return null;
+
+        // Fallback to the cached state (if available)
+        var s = BoardUI.Instance?.LastState;
+        var p = s?.Players?.FirstOrDefault(pp => pp.NetId == netId);
+        if (!string.IsNullOrWhiteSpace(p?.Name))
+            return p.Name;
+
+        // Worst-case fallback
+        return $"Player {netId}";
     }
-    public static void ShowTargets(IReadOnlyList<uint> ids, IReadOnlyList<string> names, Action<uint> onTarget)
+    public static void ShowTargetsViaIds(IReadOnlyList<uint> ids, Action<uint> onTarget)
     {
         var i = Ensure(); if (i == null) return;
+        var names = ids.Select(i.NameFor).ToArray();
         i.InternalShow(ids, names, null, onTarget, null);
     }
 
-    public static void ShowTargetsAndGuesses(IReadOnlyList<uint> ids, IReadOnlyList<string> names, IReadOnlyList<CardType> guesses, Action<uint, CardType> onBoth)
+    public static void ShowTargetsAndGuessesViaIds(IReadOnlyList<uint> ids, IReadOnlyList<CardType> guesses,
+                                                  Action<uint, CardType> onBoth)
     {
         var i = Ensure(); if (i == null) return;
+        var names = ids.Select(i.NameFor).ToArray();
         i.InternalShow(ids, names, guesses, null, onBoth);
     }
 

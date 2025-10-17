@@ -3,7 +3,7 @@ using UnityEngine.UI;
 
 public class PlayableHighlight : MonoBehaviour
 {
-    [SerializeField] Image glowImage;     // a child Image used as glow
+    [SerializeField] Image glowImage;
     [SerializeField] Color glowColor = new(0.2f, 1f, 0.4f, 0.9f);
     [SerializeField] float pulseSpeed = 2f;
     bool active;

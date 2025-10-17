@@ -186,8 +186,6 @@ public class GameController : NetworkBehaviour
 
             if (sPlayers.Count == 4) break;
         }
-        Debug.Log($"[SRV] Built {sPlayers.Count} server players: " +
-          string.Join(", ", sPlayers.Select(p => $"{NameOf(p)}#{p.NetId}")));
     }
 
     [Server]
@@ -249,16 +247,6 @@ public class GameController : NetworkBehaviour
         StartTurn();
     }
 
-    [TargetRpc]
-    void TargetPrincePrompt(NetworkConnection target, uint[] targetIds, string[] targetNames)
-    {
-        TargetPrompt.ShowTargets(targetIds, targetNames, chosenTarget =>
-        {
-            PlayerActions.Local?.ChoosePrince(chosenTarget);
-        });
-    }
-
-
     void StartTurn()
     {
         if (!roundActive) return;
@@ -313,7 +301,7 @@ public class GameController : NetworkBehaviour
         };
 
 #if UNITY_SERVER || UNITY_EDITOR
-        Debug.Log($"[SRV] RpcState players={ps.Players.Count}, currentIndex={ps.CurrentIndex}, deck={ps.DeckCount}");
+        Debug.Log("[SRV] Names: " + string.Join(", ", sPlayers.Select(p => $"{p.NetId}:{NameOf(p)}")));
 #endif
 
         RpcState(ps);
@@ -403,7 +391,7 @@ public class GameController : NetworkBehaviour
 
                 uint[] ids = valid.Select(p => p.NetId).ToArray();
                 string[] names = valid.Select(p => NameOf(p)).ToArray();
-                TargetPriestPrompt(actor.Conn, ids, names);
+                TargetPriestPrompt(actor.Conn, ids);
                 RpcLog($"{NameOf(actor)} played {CardLabel(CardType.Priest)}. Choose a player to peek.");
                 return;
             }
@@ -424,7 +412,7 @@ public class GameController : NetworkBehaviour
 
                 uint[] ids = valid.Select(p => p.NetId).ToArray();
                 string[] names = valid.Select(p => NameOf(p)).ToArray();
-                TargetBaronPrompt(actor.Conn, ids, names);
+                TargetBaronPrompt(actor.Conn, ids);
                 RpcLog($"{NameOf(actor)} played {CardLabel(CardType.Baron)}. Choose a player to compare hands with.");
                 return;
             }
@@ -450,7 +438,7 @@ public class GameController : NetworkBehaviour
 
                 uint[] ids = valid.Select(p => p.NetId).ToArray();
                 string[] names = valid.Select(p => NameOf(p)).ToArray();
-                TargetPrincePrompt(actor.Conn, ids, names);
+                TargetPrincePrompt(actor.Conn, ids);
                 RpcLog($"{NameOf(actor)} played {CardLabel(CardType.Prince)}. Choose a player to discard and draw.");
                 return;
             }
@@ -471,7 +459,7 @@ public class GameController : NetworkBehaviour
 
                 uint[] ids = valid.Select(p => p.NetId).ToArray();
                 string[] names = valid.Select(p => NameOf(p)).ToArray();
-                TargetKingPrompt(actor.Conn, ids, names);
+                TargetKingPrompt(actor.Conn, ids);
                 RpcLog($"{NameOf(actor)} played {CardLabel(CardType.King)}. Choose a player to trade hands with.");
                 return;
             }
@@ -566,14 +554,7 @@ public class GameController : NetworkBehaviour
             if (roundActive) EndTurnAdvance();
         }
     }
-    [TargetRpc]
-    void TargetKingPrompt(NetworkConnection target, uint[] targetIds, string[] targetNames)
-    {
-        TargetPrompt.ShowTargets(targetIds, targetNames, chosenTarget =>
-        {
-            PlayerActions.Local?.ChooseKing(chosenTarget);
-        });
-    }
+
 
     [Server]
     public void CmdKingTarget(uint targetNetId, NetworkConnectionToClient sender)
@@ -611,22 +592,40 @@ public class GameController : NetworkBehaviour
         }
     }
 
+
     [TargetRpc]
-    void TargetPriestPrompt(NetworkConnection target, uint[] targetIds, string[] targetNames)
+    void TargetGuardPrompt(NetworkConnection target, uint[] targetIds, string[] targetNames)
     {
-        TargetPrompt.ShowTargets(targetIds, targetNames, chosenTarget =>
-        {
-            PlayerActions.Local?.ChoosePriest(chosenTarget);
-        });
+        TargetPrompt.ShowTargetsAndGuessesViaIds(targetIds, CardDB.AllExceptGuard,
+       (chosenTarget, chosenGuess) => PlayerActions.Local?.ChooseGuard(chosenTarget, chosenGuess));
     }
 
     [TargetRpc]
-    void TargetBaronPrompt(NetworkConnection target, uint[] targetIds, string[] targetNames)
+    void TargetPriestPrompt(NetworkConnection target, uint[] targetIds)
     {
-        TargetPrompt.ShowTargets(targetIds, targetNames, chosenTarget =>
-        {
-            PlayerActions.Local?.ChooseBaron(chosenTarget);
-        });
+        TargetPrompt.ShowTargetsViaIds(targetIds,
+       chosenTarget => PlayerActions.Local?.ChoosePriest(chosenTarget));
+    }
+
+    [TargetRpc]
+    void TargetBaronPrompt(NetworkConnection target, uint[] targetIds)
+    {
+        TargetPrompt.ShowTargetsViaIds(targetIds,
+       chosenTarget => PlayerActions.Local?.ChooseBaron(chosenTarget));
+    }
+
+    [TargetRpc]
+    void TargetKingPrompt(NetworkConnection target, uint[] targetIds)
+    {
+        TargetPrompt.ShowTargetsViaIds(targetIds,
+            chosenTarget => PlayerActions.Local?.ChooseKing(chosenTarget));
+    }
+
+    [TargetRpc]
+    void TargetPrincePrompt(NetworkConnection target, uint[] targetIds)
+    {
+        TargetPrompt.ShowTargetsViaIds(targetIds,
+            chosenTarget => PlayerActions.Local?.ChoosePrince(chosenTarget));
     }
 
     string NameOf(SPlayer p)
@@ -721,16 +720,6 @@ public class GameController : NetworkBehaviour
             TryEndOfRound();
             if (roundActive) EndTurnAdvance();
         }
-    }
-
-    [TargetRpc]
-    void TargetGuardPrompt(NetworkConnection target, uint[] targetIds, string[] targetNames)
-    {
-        var guessOptions = CardDB.AllExceptGuard;
-        TargetPrompt.ShowTargetsAndGuesses(targetIds, targetNames, guessOptions, (chosenTarget, chosenGuess) =>
-        {
-            PlayerActions.Local?.ChooseGuard(chosenTarget, chosenGuess);
-        });
     }
 
 

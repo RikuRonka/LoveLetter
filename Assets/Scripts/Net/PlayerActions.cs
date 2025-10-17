@@ -23,18 +23,17 @@ public class PlayerActions : NetworkBehaviour
         GameController.Instance.CmdPlayCard(actorNetId, card, targetNetId, guardGuess);
     }
 
-    [Command]
+    [Command(requiresAuthority = false)]
     public void CmdNextRound()
     {
+        if (connectionToClient == null) return;
 
-        var pn = GetComponent<PlayerNetwork>();
-        if (pn == null || !pn.IsHost)
-        {
-            Debug.LogWarning("[SRV] CmdNextRound rejected: not host");
-            return;
-        }
+        if (connectionToClient.connectionId != 0) return;
 
-        GameController.Instance.ServerStartNextRound();
+        var gc = GameController.Instance;
+        if (gc == null) return;
+
+        gc.ServerStartNextRound();
     }
 
 

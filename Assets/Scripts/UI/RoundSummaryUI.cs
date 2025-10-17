@@ -1,3 +1,4 @@
+using Mirror;
 using System.Linq;
 using TMPro;
 using UnityEngine;
@@ -48,7 +49,7 @@ public class RoundSummaryUI : MonoBehaviour
         }
 
         // buttons (host-only)
-        bool isHost = PlayerNetwork.Local && PlayerNetwork.Local.IsHost;
+        bool isHost = NetworkServer.active;
         if (nextRoundButton)
         {
             nextRoundButton.gameObject.SetActive(!isMatchOver && isHost);
@@ -56,7 +57,7 @@ public class RoundSummaryUI : MonoBehaviour
             nextRoundButton.onClick.AddListener(() =>
             {
                 nextRoundButton.interactable = false;
-                GameController.Instance?.ServerStartNextRound();
+                PlayerActions.Local?.CmdNextRound();
             });
         }
 

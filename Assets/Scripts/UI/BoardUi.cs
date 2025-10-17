@@ -17,11 +17,14 @@ public class BoardUI : MonoBehaviour
 
     [Header("Scroll")]
     [SerializeField] ScrollRect logScroll;
+    public PublicState LastState { get; private set; }
+
 
     void Awake() => Instance = this;
 
     public void RenderState(PublicState s)
     {
+        LastState = s;
         if (turnText == null || s.Players == null || s.Players.Count == 0)
             return;
 
